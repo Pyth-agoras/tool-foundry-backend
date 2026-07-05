@@ -1,0 +1,311 @@
+openapi: 3.1.0
+info:
+  title: Tool Foundry API
+  version: 0.1.0
+  description: API bridge between a Custom GPT and an external Tool Foundry backend.
+servers:
+  - url: https://YOUR-RENDER-URL
+components:
+  securitySchemes:
+    ApiKeyAuth:
+      type: apiKey
+      in: header
+      name: x-api-key
+security:
+  - ApiKeyAuth: []
+paths:
+  /health:
+    get:
+      operationId: healthCheck
+      summary: Check whether the Tool Foundry backend is online.
+      security: []
+      responses:
+        "200":
+          description: Backend is healthy.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok:
+                    type: boolean
+                  service:
+                    type: string
+                  version:
+                    type: string
+                  time:
+                    type: string
+  /tools/list:
+    get:
+      operationId: listTools
+      summary: List registered tools available to the Custom GPT.
+      responses:
+        "200":
+          description: List of tools.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tools:
+                    type: array
+                    items:
+                      type: object
+                      properties:
+                        tool_id:
+                          type: string
+                        name:
+                          type: string
+                        purpose:
+                          type: string
+                        status:
+                          type: string
+                        risk_level:
+                          type: string
+                        version:
+                          type: string
+                        approval_state:
+                          type: string
+  /tools/mission/create:
+    post:
+      operationId: createToolMission
+      summary: Create a new tool-building mission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_name, purpose, capability_needed, success_criteria]
+              properties:
+                tool_name:
+                  type: string
+                purpose:
+                  type: string
+                capability_needed:
+                  type: string
+                input_schema_description:
+                  type: string
+                output_schema_description:
+                  type: string
+                success_criteria:
+                  type: array
+                  items:
+                    type: string
+                failure_conditions:
+                  type: array
+                  items:
+                    type: string
+                safety_boundaries:
+                  type: array
+                  items:
+                    type: string
+                privacy_boundaries:
+                  type: array
+                  items:
+                    type: string
+                cost_boundaries:
+                  type: array
+                  items:
+                    type: string
+                test_cases:
+                  type: array
+                  items:
+                    type: string
+                approval_required:
+                  type: boolean
+      responses:
+        "200":
+          description: Tool mission created.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mission_id:
+                    type: string
+                  status:
+                    type: string
+                  message:
+                    type: string
+  /tools/mission/status:
+    get:
+      operationId: getToolMissionStatus
+      summary: Get the current status of a tool-building mission.
+      parameters:
+        - name: mission_id
+          in: query
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Mission status.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mission_id:
+                    type: string
+                  status:
+                    type: string
+                  codex_report:
+                    type: string
+                  next_action:
+                    type: string
+                  mission:
+                    type: object
+                    additionalProperties: true
+  /tools/mission/revision:
+    post:
+      operationId: sendToolMissionRevision
+      summary: Send a revision request for a tool mission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [mission_id, revision_request]
+              properties:
+                mission_id:
+                  type: string
+                revision_request:
+                  type: string
+                reason:
+                  type: string
+      responses:
+        "200":
+          description: Revision request sent.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  mission_id:
+                    type: string
+                  status:
+                    type: string
+                  message:
+                    type: string
+  /tools/register:
+    post:
+      operationId: registerTool
+      summary: Register a completed tool for future use by the Custom GPT.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_id, name, purpose, status]
+              properties:
+                tool_id:
+                  type: string
+                name:
+                  type: string
+                purpose:
+                  type: string
+                status:
+                  type: string
+                  enum: [Draft, Building, Testing, Needs Revision, Pending Approval, Approved, Deprecated]
+                version:
+                  type: string
+                input_schema_description:
+                  type: string
+                output_schema_description:
+                  type: string
+                risk_level:
+                  type: string
+                approval_state:
+                  type: string
+      responses:
+        "200":
+          description: Tool registered.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tool_id:
+                    type: string
+                  status:
+                    type: string
+                  message:
+                    type: string
+  /tools/evaluate:
+    post:
+      operationId: evaluateTool
+      summary: Evaluate a registered or draft tool against a mission.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_id]
+              properties:
+                tool_id:
+                  type: string
+                mission_id:
+                  type: string
+                evaluation_depth:
+                  type: string
+                  enum: [quick, standard, strict]
+      responses:
+        "200":
+          description: Tool evaluation result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tool_id:
+                    type: string
+                  score:
+                    type: number
+                  passed:
+                    type: boolean
+                  report:
+                    type: string
+                  approval_recommendation:
+                    type: string
+  /tools/execute:
+    post:
+      operationId: executeTool
+      summary: Execute an approved tool.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tool_id, input]
+              properties:
+                tool_id:
+                  type: string
+                input:
+                  type: object
+                  additionalProperties: true
+                user_visible_purpose:
+                  type: string
+      responses:
+        "200":
+          description: Tool execution result.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  tool_id:
+                    type: string
+                  result:
+                    type: object
+                    additionalProperties: true
+                  summary:
+                    type: string
+                  warnings:
+                    type: array
+                    items:
+                      type: string
