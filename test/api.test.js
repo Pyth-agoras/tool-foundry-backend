@@ -75,3 +75,42 @@ test("can create mission, register idea analyzer, evaluate, and execute", async 
   assert.equal(execution.body.tool_id, "idea_analyzer");
   assert.ok(execution.body.result.core_goal);
 });
+
+
+test("can register and execute tool mission generator", async () => {
+  const register = await request(app)
+    .post("/tools/register")
+    .set("x-api-key", "test-key")
+    .send({
+      tool_id: "tool_mission_generator",
+      name: "Tool Mission Generator",
+      purpose: "Convert a raw idea or analyzed idea into a complete Codex-ready Tool Mission.",
+      status: "Approved",
+      version: "0.1.0",
+      risk_level: "low",
+      approval_state: "approved"
+    });
+
+  assert.equal(register.status, 200);
+
+  const execution = await request(app)
+    .post("/tools/execute")
+    .set("x-api-key", "test-key")
+    .send({
+      tool_id: "tool_mission_generator",
+      input: {
+        raw_idea: "I want a PDF analyzer tool.",
+        desired_tool_type: "pdf_analyzer",
+        risk_level: "low",
+        user_constraints: "No coding questions for the user."
+      },
+      user_visible_purpose: "Generate a Codex-ready tool mission."
+    });
+
+  assert.equal(execution.status, 200);
+  assert.equal(execution.body.tool_id, "tool_mission_generator");
+  assert.ok(execution.body.result.complete_tool_mission);
+  assert.ok(execution.body.result.complete_tool_mission.tool_name);
+  assert.ok(execution.body.result.complete_tool_mission.success_criteria.length);
+  assert.ok(execution.body.result.complete_tool_mission.codex_implementation_notes);
+});

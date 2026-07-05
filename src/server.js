@@ -45,6 +45,88 @@ function summarizeIdea(rawIdea = "") {
   };
 }
 
+
+function generateToolMission(input = {}) {
+  const rawIdea = String(input.raw_idea || input.idea || input.text || "").trim();
+  const analysis = input.analysis_result || {};
+  const desiredToolType = String(input.desired_tool_type || analysis.needed_tool_type || "AI tool").trim();
+  const riskLevel = String(input.risk_level || analysis.risk_level || "low").trim();
+  const userConstraints = String(input.user_constraints || "").trim();
+
+  const baseName = desiredToolType
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "")
+    .slice(0, 48) || "generated_tool";
+
+  const missionPurpose = rawIdea
+    ? `Build a ${desiredToolType} for this user idea: ${rawIdea}`
+    : `Build a ${desiredToolType} from the provided analysis.`;
+
+  const capability = rawIdea
+    ? `Convert the user idea into a reliable, callable backend tool that supports the Custom GPT's workflow: ${rawIdea}`
+    : "Convert the provided analyzed idea into a reliable, callable backend tool that supports the Custom GPT's workflow.";
+
+  return {
+    complete_tool_mission: {
+      tool_name: baseName,
+      purpose: missionPurpose,
+      capability_needed: capability,
+      input_schema_description:
+        "Accepts structured JSON input from the Custom GPT. Include raw user text, relevant context, and any options needed for the selected tool.",
+      output_schema_description:
+        "Returns a structured JSON result with a plain-English summary, key fields needed by the Custom GPT, warnings, and next_action.",
+      success_criteria: [
+        "The tool accepts structured input without requiring the user to write code.",
+        "The tool returns a useful structured result that the Custom GPT can read and explain.",
+        "The tool handles missing or vague input gracefully.",
+        "The tool includes plain-English output suitable for a non-technical user.",
+        "The tool can be registered and executed through the existing Tool Foundry API."
+      ],
+      failure_conditions: [
+        "The tool asks the user programming questions.",
+        "The tool requires manual command-line steps from the user.",
+        "The tool returns only vague or unstructured text.",
+        "The tool omits safety, privacy, or cost boundaries.",
+        "The tool fails silently or hides important errors from the Custom GPT."
+      ],
+      safety_boundaries: [
+        "Do not enable harmful, illegal, or unsafe capabilities.",
+        "Do not execute untested code for real user work.",
+        "Require user approval before tools affect real-world systems.",
+        "Require user approval before public deployment, messaging, publishing, purchases, or account access."
+      ],
+      privacy_boundaries: [
+        "Do not store sensitive user data unless explicitly approved.",
+        "Do not expose secrets, API keys, tokens, or private files in logs or responses.",
+        "Use the least data needed for the tool's purpose."
+      ],
+      cost_boundaries: [
+        "Prefer free or low-cost implementation paths.",
+        "Ask for user approval before paid API usage, higher hosting costs, or recurring jobs.",
+        userConstraints || "Stay within the existing Render and GitHub setup unless the user approves an upgrade."
+      ].filter(Boolean),
+      test_cases: [
+        "Normal input: a clear user idea should produce a complete structured result.",
+        "Vague input: a vague idea should produce clarifying assumptions and a safe next action.",
+        "Missing input: missing fields should return a graceful error or request for the missing owner-level detail.",
+        "Risky input: potentially unsafe requests should be bounded and routed to review.",
+        "Non-technical user: output should not include coding instructions unless explicitly requested."
+      ],
+      approval_required: true,
+      codex_implementation_notes:
+        `Implement the simplest reliable backend handler for tool_name '${baseName}'. Keep compatibility with the current Tool Foundry endpoints. Do not ask the user coding questions. Technical decisions should be made by Codex. Owner approval is required for cost, privacy, permissions, public deployment, external account access, and activation. Risk level: ${riskLevel}.`
+    },
+    source: {
+      raw_idea: rawIdea,
+      desired_tool_type: desiredToolType,
+      risk_level: riskLevel,
+      user_constraints: userConstraints,
+      analysis_result: analysis
+    }
+  };
+}
+
 app.get("/health", (req, res) => {
   res.json({ ok: true, service: "tool-foundry-backend", version: "0.1.0", time: nowIso() });
 });
@@ -85,6 +167,7 @@ app.post("/tools/mission/create", (req, res) => {
     cost_boundaries: body.cost_boundaries || [],
     test_cases: body.test_cases || [],
     approval_required: Boolean(body.approval_required),
+    codex_implementation_notes: body.codex_implementation_notes || "",
     status: "Draft",
     codex_report: "Mission created. Waiting for Codex/tool-building workflow.",
     created_at: nowIso(),
@@ -208,6 +291,9 @@ app.post("/tools/execute", (req, res) => {
   if (tool_id === "idea_analyzer") {
     result = summarizeIdea(input.raw_idea || input.idea || input.text || "");
     summary = "Idea Analyzer completed.";
+  } else if (tool_id === "tool_mission_generator") {
+    result = generateToolMission(input);
+    summary = "Tool Mission Generator completed.";
   } else {
     result = { message: "Tool is approved and registered, but this v0 backend does not yet have a custom executable handler for this tool.", received_input: input };
     summary = "Registered tool placeholder executed.";

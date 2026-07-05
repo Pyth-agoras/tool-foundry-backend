@@ -58,3 +58,12 @@ The backend already knows how to execute `idea_analyzer`.
 
 Do not upload a `.env` file to GitHub.
 Do not share your real API key.
+
+## Starter executable tools
+
+This backend includes two starter executable handlers:
+
+- `idea_analyzer`: analyzes a raw user idea into a core goal, intelligence pattern, risk level, needed tool type, and next action.
+- `tool_mission_generator`: converts a raw idea or analysis result into a complete Codex-ready Tool Mission object.
+
+Register each tool as `Approved` before executing it from the Custom GPT.
