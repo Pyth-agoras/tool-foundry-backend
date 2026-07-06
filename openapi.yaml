@@ -2,11 +2,12 @@ openapi: 3.1.0
 
 info:
   title: Tool Foundry API
-  version: 0.2.0
+  version: 0.3.0
   description: >
     API bridge between a Custom GPT and an external Tool Foundry backend.
-    This version includes built-in core tools and a Foundry Self-Healer so
-    starter tools survive redeploys and common setup problems can be diagnosed.
+    This version includes built-in core tools, the Foundry Self-Healer,
+    and Foundry Operator maintenance endpoints for diagnosis, repair,
+    approved GitHub updates, Render redeploy hooks, and post-deploy checks.
 
 servers:
   - url: https://tool-foundry-backend.onrender.com
@@ -185,6 +186,25 @@ components:
             check_scope:
               type: string
               description: Optional scope for a diagnostic check.
+            approval_confirmed:
+              type: boolean
+              description: Required true for foundry_operator upgrade/full_cycle file updates unless AUTO_APPROVE_SAFE_UPDATES is enabled.
+            commit_message:
+              type: string
+              description: Commit message to use when foundry_operator writes approved files to GitHub.
+            files:
+              type: array
+              description: Approved backend files for foundry_operator to write to GitHub.
+              items:
+                type: object
+                required:
+                  - path
+                  - content
+                properties:
+                  path:
+                    type: string
+                  content:
+                    type: string
           additionalProperties: true
         user_visible_purpose:
           type: string
@@ -449,3 +469,138 @@ paths:
           description: Tool is not approved for execution.
         "404":
           description: Tool not found.
+
+
+  /foundry/diagnose:
+    post:
+      operationId: foundryDiagnose
+      summary: Diagnose Tool Foundry setup and self-update readiness.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Foundry diagnosis result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /foundry/repair:
+    post:
+      operationId: foundryRepair
+      summary: Repair core built-in tool registrations.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Foundry repair result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /foundry/deploy:
+    post:
+      operationId: foundryDeploy
+      summary: Trigger the Render deploy hook configured for this backend.
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              additionalProperties: true
+      responses:
+        "200":
+          description: Render deploy trigger result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /foundry/upgrade:
+    post:
+      operationId: foundryUpgrade
+      summary: Apply approved backend file updates to GitHub.
+      description: Requires approval_confirmed true unless AUTO_APPROVE_SAFE_UPDATES is enabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approval_confirmed:
+                  type: boolean
+                commit_message:
+                  type: string
+                files:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - path
+                      - content
+                    properties:
+                      path:
+                        type: string
+                      content:
+                        type: string
+      responses:
+        "200":
+          description: GitHub upgrade result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true
+
+  /foundry/full-cycle:
+    post:
+      operationId: foundryFullCycle
+      summary: Apply approved backend file updates, trigger Render redeploy, and run checks.
+      description: Requires approval_confirmed true unless AUTO_APPROVE_SAFE_UPDATES is enabled.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                approval_confirmed:
+                  type: boolean
+                commit_message:
+                  type: string
+                files:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - path
+                      - content
+                    properties:
+                      path:
+                        type: string
+                      content:
+                        type: string
+      responses:
+        "200":
+          description: Full-cycle update result.
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties: true

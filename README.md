@@ -136,3 +136,92 @@ Diagnoses and repairs common Tool Foundry setup issues.
 Core tools now survive redeploys because they are built into code.
 
 Custom generated tools, missions, evaluations, and execution logs still need a persistent database upgrade if they must survive all redeploys and instance resets.
+
+## Version 0.3.0 — Foundry Operator
+
+This version adds the built-in `foundry_operator` tool.
+
+The operator is the automation layer that is supposed to stop the repeated manual loop of:
+
+- downloading ZIP files
+- uploading files to GitHub
+- manually redeploying Render
+- manually re-registering core tools
+
+### Built-in tools after this update
+
+After deploying this version, `/tools/list` should show:
+
+- `idea_analyzer`
+- `tool_mission_generator`
+- `foundry_self_healer`
+- `foundry_operator`
+
+### One-time owner setup values in Render
+
+Add these in Render → your `tool-foundry-backend` service → Environment:
+
+- `API_KEY`: your existing private backend key
+- `GITHUB_TOKEN`: a GitHub fine-grained token limited to this repo with Contents read/write
+- `GITHUB_OWNER`: your GitHub username or org, for example `Pyth-agoras`
+- `GITHUB_REPO`: `tool-foundry-backend`
+- `GITHUB_BRANCH`: `main`
+- `RENDER_DEPLOY_HOOK_URL`: the Deploy Hook URL from this Render service
+- `PUBLIC_BASE_URL`: your live Render URL, for example `https://tool-foundry-backend.onrender.com`
+
+Leave `AUTO_APPROVE_SAFE_UPDATES` unset unless you intentionally want safe self-updates to proceed without approval.
+
+### Test the operator through Custom GPT
+
+Ask the Custom GPT:
+
+```text
+Use foundry_operator to diagnose the Tool Foundry setup.
+
+Use:
+tool_id: foundry_operator
+
+input:
+{
+  "mode": "diagnose",
+  "check_scope": "GitHub token, Render deploy hook, public base URL, core tools, self-update readiness"
+}
+
+user_visible_purpose:
+Confirm whether the Tool Foundry can update GitHub, trigger Render redeploys, and repair itself without manual ZIP uploads.
+```
+
+Expected result:
+
+- core tools present
+- GitHub configuration detected
+- Render deploy hook detected
+- public base URL detected
+- self-update readiness reported
+
+### Direct maintenance endpoints
+
+The backend also exposes protected endpoints:
+
+- `POST /foundry/diagnose`
+- `POST /foundry/repair`
+- `POST /foundry/deploy`
+- `POST /foundry/upgrade`
+- `POST /foundry/full-cycle`
+
+These require the same `x-api-key` authentication as the other protected endpoints.
+
+### Safety limits
+
+The operator blocks:
+
+- writes outside the project
+- `.env`
+- `.git/`
+- `node_modules/`
+- `data/`
+- path traversal like `../`
+- repo targets other than `tool-foundry-backend`
+
+It requires owner approval for file updates unless `AUTO_APPROVE_SAFE_UPDATES=true`.
+
