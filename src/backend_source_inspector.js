@@ -306,7 +306,13 @@ async function backendSourceInspector(input = {}) {
 
     for (const route of ['/health', '/tools/list', '/tools/execute', '/tools/register', '/tools/mission/create', '/tools/evaluate']) {
       const location = findLine(content, route);
-      if (location) routeLocations[route] = { file: path, line: location.line, section_hint: location.match };
+      if (location) {
+        const priority = path === 'src/server.js' ? 3 : /app\.(get|post|put|patch|delete)\s*\(/.test(location.match) ? 2 : 1;
+        const previous = routeLocations[route];
+        if (!previous || priority > previous.priority) {
+          routeLocations[route] = { file: path, line: location.line, section_hint: location.match, priority };
+        }
+      }
     }
 
     const registry = findLine(content, 'EXECUTABLE_HANDLERS');
@@ -328,6 +334,10 @@ async function backendSourceInspector(input = {}) {
 
   const metadata = new Map(Object.entries(files).flatMap(([path, content]) => extractMetadataIds(content, path)).map((item) => [item.tool_id, item]));
   const executableHandlersFound = handlers.map((handler) => ({ ...handler, metadata_found: metadata.has(handler.tool_id) || handler.tool_id === TOOL_ID }));
+
+  for (const route of Object.keys(routeLocations)) {
+    delete routeLocations[route].priority;
+  }
 
   const routerFile = handlerRegistryLocation ? handlerRegistryLocation.file : 'src/executable_tool_router.js';
   const serverFile = routeLocations['/tools/execute'] ? routeLocations['/tools/execute'].file : 'src/server.js';
