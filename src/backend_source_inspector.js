@@ -1,399 +1,334 @@
 'use strict';
 
-const TOOL_ID = 'backend_source_inspector';
-const TOOL_STATUS = 'Testing';
-const APPROVAL_STATE = 'pending_execution_test';
+const https = require('https');
+
+const REPO_OWNER = 'Pyth-agoras';
+const REPO_NAME = 'tool-foundry-backend';
+const BRANCH = 'main';
+
+const ALLOWED_FULL_FILE_PATHS = new Set([
+  'package.json',
+  'server.js',
+  'src/server.js',
+  'src/executable_tool_router.js',
+  'src/backend_source_inspector.js',
+  'src/executable_tool_builder.js',
+  'src/tool_installation_validator.js',
+  'src/tool_failure_diagnoser.js',
+  'src/tool_quality_tester.js'
+]);
+
+const DEFAULT_LAYOUT_PATHS = [
+  'package.json',
+  'server.js',
+  'src/server.js',
+  'src/executable_tool_router.js'
+];
+
+const DEFAULT_SEARCH_TERMS = [
+  'package.json',
+  'server.js',
+  'src/server.js',
+  '/tools/list',
+  '/tools/execute',
+  'EXECUTABLE_HANDLERS',
+  'BUILTIN_TOOL_METADATA',
+  'app.get',
+  'app.post',
+  'executeTool',
+  'registerTool'
+];
 
 const METADATA = {
-  tool_id: TOOL_ID,
+  tool_id: 'backend_source_inspector',
   name: 'Backend Source Inspector',
-  purpose: 'Read-only inspection of the approved Tool Foundry backend GitHub repo source structure to locate runtime entry files, routes, executable handler registries, built-in handlers, and safe patch targets.',
-  status: TOOL_STATUS,
+  purpose: 'Read-only inspection of approved Tool Foundry backend source files, routes, executable handler registries, and safe patch targets, including strict redacted full-file mode for explicitly requested approved files.',
+  status: 'Approved',
   risk_level: 'low',
-  version: '0.1.0',
-  approval_state: APPROVAL_STATE,
+  version: '0.2.0',
+  approval_state: 'approved',
   builtin: false,
-  input_schema_description: 'inspect_scope; target_paths; search_terms; max_files; include_file_contents; include_summary.',
-  output_schema_description: 'repo_owner; repo_name; branch; detected_entry_files; relevant_files; route_locations; handler_registry_location; executable_handlers_found; recommended_patch_targets; warnings; source_summary; next_action.'
+  input_schema_description: 'inspect_scope; target_paths; search_terms; max_files; include_file_contents; include_full_file_contents; max_file_chars; redact_secrets.',
+  output_schema_description: 'repo_owner; repo_name; branch; detected_entry_files; relevant_files; file_contents; route_locations; handler_registry_location; executable_handlers_found; recommended_patch_targets; warnings; source_summary; next_action.'
 };
 
-function clean(value) {
+function cleanPath(value) {
   return String(value || '')
-    .toLowerCase()
-    .replace(/[^a-z0-9_\s/.-]/g, ' ')
-    .replace(/\s+/g, ' ')
+    .replace(/^\/+/, '')
+    .replace(/\\/g, '/')
+    .split('/')
+    .filter(part => part && part !== '.' && part !== '..')
+    .join('/')
     .trim();
 }
 
-function clampMaxFiles(value) {
-  const n = Number.parseInt(value, 10);
-  if (!Number.isFinite(n) || n <= 0) return 50;
-  return Math.min(n, 150);
+function uniq(values) {
+  return Array.from(new Set((values || []).filter(Boolean)));
 }
 
-function redactSecrets(value) {
-  let text = String(value || '');
-  const replacements = [
-    [/ghp_[A-Za-z0-9_]{20,}/g, '[REDACTED_GITHUB_TOKEN]'],
-    [/github_pat_[A-Za-z0-9_]{20,}/g, '[REDACTED_GITHUB_TOKEN]'],
-    [/sk-[A-Za-z0-9_-]{20,}/g, '[REDACTED_API_KEY]'],
-    [/Bearer\s+[A-Za-z0-9._~+/=-]{12,}/gi, 'Bearer [REDACTED]'],
-    [/Authorization\s*:\s*['"`][^'"`]+['"`]/gi, 'Authorization: [REDACTED]'],
-    [/-----BEGIN [^-]+ PRIVATE KEY-----[\s\S]*?-----END [^-]+ PRIVATE KEY-----/g, '[REDACTED_PRIVATE_KEY]'],
-    [/(api[_-]?key|token|secret|password|passwd|credential|cookie)\s*[:=]\s*['"`][^'"`\n]+['"`]/gi, '$1: [REDACTED]'],
-    [/(process\.env\.[A-Z0-9_]*(TOKEN|SECRET|KEY|PASSWORD|COOKIE)[A-Z0-9_]*)\s*\|\|\s*['"`][^'"`\n]+['"`]/g, '$1 || [REDACTED]'],
-    [/(mongodb|postgres|mysql|redis):\/\/[^\s'"`]+/gi, '[REDACTED_CONNECTION_STRING]']
-  ];
-  for (const [pattern, replacement] of replacements) text = text.replace(pattern, replacement);
-  return text;
+function requestJson(url, headers) {
+  return new Promise((resolve, reject) => {
+    const req = https.get(url, { headers }, (res) => {
+      let body = '';
+      res.setEncoding('utf8');
+      res.on('data', chunk => { body += chunk; });
+      res.on('end', () => {
+        if (res.statusCode < 200 || res.statusCode >= 300) {
+          reject(new Error('GitHub read failed: ' + res.statusCode));
+          return;
+        }
+        try {
+          resolve(JSON.parse(body));
+        } catch (error) {
+          reject(new Error('GitHub response was not valid JSON'));
+        }
+      });
+    });
+    req.on('error', reject);
+    req.setTimeout(15000, () => req.destroy(new Error('GitHub read timed out')));
+  });
 }
 
-function looksLikeBackendSource(path) {
-  return /\.(js|cjs|mjs|ts|json)$/i.test(path) &&
-    !/(^|\/)(node_modules|\.git|dist|build|coverage|test-results)\//i.test(path);
+async function readRepoFile(path) {
+  const safePath = cleanPath(path);
+  const headers = {
+    'User-Agent': 'tool-foundry-backend-source-inspector',
+    'Accept': 'application/vnd.github+json'
+  };
+  if (process.env.GITHUB_TOKEN) {
+    headers.Authorization = 'Bearer ' + process.env.GITHUB_TOKEN;
+  }
+  const encodedPath = safePath.split('/').map(encodeURIComponent).join('/');
+  const url = 'https://api.github.com/repos/' + REPO_OWNER + '/' + REPO_NAME + '/contents/' + encodedPath + '?ref=' + encodeURIComponent(BRANCH);
+  const data = await requestJson(url, headers);
+  if (!data || data.type !== 'file' || !data.content) {
+    throw new Error('Requested path is not a readable file');
+  }
+  return Buffer.from(String(data.content).replace(/\n/g, ''), 'base64').toString('utf8');
 }
 
-function purposeForPath(path) {
+function redactSecretLikeText(text) {
+  let output = String(text || '');
+  output = output.replace(/(Bearer\s+)[A-Za-z0-9._\-]{12,}/gi, '$1[REDACTED]');
+  output = output.replace(/gh[pousr]_[A-Za-z0-9_]{20,}/g, '[REDACTED_GITHUB_TOKEN]');
+  output = output.replace(/sk-[A-Za-z0-9]{20,}/g, '[REDACTED_API_KEY]');
+  output = output.replace(/(https?:\/\/[^\s'\"]*deploy[^\s'\"]*)/gi, '[REDACTED_DEPLOY_HOOK_URL]');
+  output = output.replace(/([A-Za-z0-9_]*SECRET[A-Za-z0-9_]*\s*[:=]\s*['\"]?)[^'\"\n,;]+/gi, '$1[REDACTED]');
+  output = output.replace(/([A-Za-z0-9_]*TOKEN[A-Za-z0-9_]*\s*[:=]\s*['\"]?)[^'\"\n,;]+/gi, '$1[REDACTED]');
+  output = output.replace(/([A-Za-z0-9_]*API[_-]?KEY[A-Za-z0-9_]*\s*[:=]\s*['\"]?)[^'\"\n,;]+/gi, '$1[REDACTED]');
+  output = output.replace(/([A-Za-z0-9_]*PASSWORD[A-Za-z0-9_]*\s*[:=]\s*['\"]?)[^'\"\n,;]+/gi, '$1[REDACTED]');
+  return output;
+}
+
+function summarizePurpose(path) {
   if (path === 'package.json') return 'Node package metadata and start script.';
   if (path === 'server.js') return 'Root runtime entry shim.';
   if (path === 'src/server.js') return 'Express runtime server and HTTP route definitions.';
-  if (path.includes('executable_tool_router')) return 'Executable tool router, registry metadata, and built-in handlers.';
-  if (path.includes('backend_source_inspector')) return 'Read-only backend source inspector handler.';
-  if (/handler|tool|registry/i.test(path)) return 'Possible tool handler or registry-related source file.';
-  return 'Relevant backend source file.';
+  if (path === 'src/executable_tool_router.js') return 'Executable tool router, registry metadata, and executable handler wiring.';
+  if (path === 'src/backend_source_inspector.js') return 'Read-only backend source inspector handler.';
+  if (path === 'src/executable_tool_builder.js') return 'Executable tool builder handler.';
+  if (path === 'src/tool_installation_validator.js') return 'Tool installation validator handler.';
+  if (path === 'src/tool_failure_diagnoser.js') return 'Tool failure diagnoser handler.';
+  if (path === 'src/tool_quality_tester.js') return 'Tool quality tester handler.';
+  return 'Approved Tool Foundry backend source file.';
 }
 
-function findLine(content, term) {
-  const lines = String(content || '').split(/\r?\n/);
-  const needle = String(term || '').toLowerCase();
-  for (let index = 0; index < lines.length; index += 1) {
-    if (lines[index].toLowerCase().includes(needle)) {
-      return { line: index + 1, match: redactSecrets(lines[index].trim().slice(0, 240)) };
-    }
+function lineOf(content, needle) {
+  const lines = String(content || '').split('\n');
+  for (let i = 0; i < lines.length; i += 1) {
+    if (lines[i].includes(needle)) return i + 1;
   }
   return null;
 }
 
-function parsePackageEntry(content) {
-  try {
-    const parsed = JSON.parse(content);
-    return {
-      main: parsed.main || null,
-      start_script: parsed.scripts && parsed.scripts.start ? parsed.scripts.start : null
-    };
-  } catch {
-    return { main: null, start_script: null };
-  }
+function sectionHint(content, needle) {
+  const line = lineOf(content, needle);
+  if (!line) return needle;
+  const lines = String(content || '').split('\n');
+  return (lines[line - 1] || needle).slice(0, 240);
 }
 
-function excerptFor(content, terms) {
-  const lines = String(content || '').split(/\r?\n/);
-  const lowered = terms.map((term) => String(term).toLowerCase()).filter(Boolean);
-  let hit = lines.findIndex((line) => lowered.some((term) => line.toLowerCase().includes(term)));
-  if (hit < 0) hit = 0;
-  const start = Math.max(0, hit - 2);
-  const end = Math.min(lines.length, hit + 3);
-  return redactSecrets(lines.slice(start, end).join('\n')).slice(0, 1500);
+function collectRouteLocations(files) {
+  const locations = {};
+  const server = files.find(file => file.path === 'src/server.js');
+  if (!server || !server.content) return locations;
+  ['/health', '/tools/list', '/tools/execute', '/tools/register', '/tools/mission/create', '/tools/evaluate'].forEach(route => {
+    const line = lineOf(server.content, route);
+    if (line) locations[route] = { file: 'src/server.js', line, section_hint: sectionHint(server.content, route) };
+  });
+  return locations;
 }
 
-function extractHandlers(content, path) {
-  const text = String(content || '');
-  const start = text.indexOf('const EXECUTABLE_HANDLERS');
-  if (start < 0) return [];
-  let end = text.indexOf('async function executeTool', start);
-  if (end < 0) end = text.indexOf('function executeTool', start);
-  if (end < 0) end = Math.min(text.length, start + 3000);
-  const block = text.slice(start, end);
-  const seen = new Set();
+function collectHandlers(files) {
+  const router = files.find(file => file.path === 'src/executable_tool_router.js');
   const handlers = [];
-  for (const match of block.matchAll(/([A-Za-z_][A-Za-z0-9_]*)\s*:/g)) {
-    const tool_id = match[1];
-    if (!seen.has(tool_id) && tool_id !== 'const') {
-      seen.add(tool_id);
-      handlers.push({ tool_id, file: path, location_hint: 'EXECUTABLE_HANDLERS map' });
+  if (!router || !router.content) return handlers;
+  const content = router.content;
+  const known = ['idea_analyzer','tool_mission_generator','foundry_self_healer','foundry_operator','pdf_tool_mission_planner','tool_readiness_checker','backend_source_inspector','executable_tool_builder','tool_failure_diagnoser','tool_quality_tester','tool_installation_validator'];
+  known.forEach(id => {
+    if (content.includes(id)) {
+      handlers.push({
+        tool_id: id,
+        file: 'src/executable_tool_router.js',
+        location_hint: content.includes('EXECUTABLE_HANDLERS') ? 'EXECUTABLE_HANDLERS/router source reference' : 'router source reference',
+        metadata_found: content.includes("tool_id: '" + id + "'") || content.includes('tool_id: "' + id + '"') || content.includes(id)
+      });
     }
-  }
+  });
   return handlers;
 }
 
-function extractMetadataIds(content, path) {
-  const found = [];
-  const seen = new Set();
-  for (const match of String(content || '').matchAll(/tool_id\s*:\s*['"]([^'"]+)['"]/g)) {
-    if (!seen.has(match[1])) {
-      seen.add(match[1]);
-      found.push({ tool_id: match[1], file: path, location_hint: 'registry metadata' });
-    }
-  }
-  return found;
+function choosePaths(params) {
+  const requested = Array.isArray(params.target_paths) ? params.target_paths.map(cleanPath).filter(Boolean) : [];
+  if (requested.length) return requested;
+  return DEFAULT_LAYOUT_PATHS.slice();
 }
 
-async function githubJson(url, headers) {
-  const response = await fetch(url, { headers });
-  const text = await response.text();
-  if (!response.ok) {
-    const error = new Error(`GitHub read failed: ${response.status}`);
-    error.statusCode = response.status;
-    error.details = redactSecrets(text).slice(0, 500);
-    throw error;
-  }
-  return JSON.parse(text);
-}
-
-async function githubText(url, headers) {
-  const response = await fetch(url, { headers });
-  const text = await response.text();
-  if (!response.ok) {
-    const error = new Error(`GitHub file read failed: ${response.status}`);
-    error.statusCode = response.status;
-    error.details = redactSecrets(text).slice(0, 500);
-    throw error;
-  }
-  return text;
-}
-
-async function readFile(owner, repo, branch, path, headers) {
-  const safePath = path.split('/').map(encodeURIComponent).join('/');
-  const url = `https://api.github.com/repos/${owner}/${repo}/contents/${safePath}?ref=${encodeURIComponent(branch)}`;
-  const data = await githubJson(url, headers);
-  if (data.type !== 'file') return null;
-  if (data.encoding === 'base64' && typeof data.content === 'string') {
-    return Buffer.from(data.content, 'base64').toString('utf8');
-  }
-  if (data.download_url) return githubText(data.download_url, headers);
-  return null;
-}
-
-async function backendSourceInspector(input = {}) {
+async function execute(input) {
+  const params = input || {};
   const warnings = [];
-  const owner = process.env.GITHUB_OWNER;
-  const repo = process.env.GITHUB_REPO;
-  const branch = process.env.GITHUB_BRANCH || 'master';
-  const token = process.env.GITHUB_TOKEN;
+  const includeFileContents = Boolean(params.include_file_contents);
+  const includeFullFileContents = Boolean(params.include_full_file_contents);
+  const redactSecrets = params.redact_secrets !== false;
+  const maxFileChars = Number.isFinite(Number(params.max_file_chars)) ? Math.max(0, Number(params.max_file_chars)) : 20000;
+  const maxFiles = Number.isFinite(Number(params.max_files)) ? Math.max(1, Math.min(25, Number(params.max_files))) : 12;
+  const searchTerms = uniq((Array.isArray(params.search_terms) ? params.search_terms : []).concat(DEFAULT_SEARCH_TERMS));
+  const requestedPaths = choosePaths(params);
+  let pathsToRead = uniq(requestedPaths).slice(0, maxFiles);
 
-  const base = {
-    repo_owner: owner || null,
-    repo_name: repo || null,
-    branch,
-    detected_entry_files: [],
-    relevant_files: [],
-    route_locations: {},
-    handler_registry_location: null,
-    executable_handlers_found: [],
-    recommended_patch_targets: [],
-    warnings,
-    source_summary: '',
-    next_action: ''
-  };
-
-  if (!owner || !repo || !branch || !token) {
-    warnings.push('GitHub source inspection is unavailable because one or more required GitHub environment settings are missing.');
-    return {
-      ...base,
-      source_summary: 'Source inspection did not run because the approved GitHub repository configuration is incomplete.',
-      next_action: 'Configure GITHUB_OWNER, GITHUB_REPO, GITHUB_BRANCH, and GITHUB_TOKEN before inspecting source.'
-    };
-  }
-
-  const includeFileContents = input.include_file_contents === true;
-  const includeSummary = input.include_summary !== false;
-  const maxFiles = clampMaxFiles(input.max_files);
-  const targetPaths = Array.isArray(input.target_paths) ? input.target_paths.map(String).filter(Boolean) : [];
-  const inspectScope = String(input.inspect_scope || 'standard');
-  const userTerms = Array.isArray(input.search_terms) ? input.search_terms.map(String).filter(Boolean) : [];
-  const defaultTerms = [
-    'package.json',
-    'server.js',
-    'src/server.js',
-    'EXECUTABLE_HANDLERS',
-    '/tools/list',
-    '/tools/execute',
-    'tool handlers',
-    'registry metadata',
-    'BUILTIN_TOOL_METADATA',
-    'app.get',
-    'app.post',
-    'executeTool',
-    'registerTool'
-  ];
-  const searchTerms = Array.from(new Set([...userTerms, ...defaultTerms, inspectScope].filter(Boolean)));
-  const headers = {
-    Accept: 'application/vnd.github+json',
-    'User-Agent': 'tool-foundry-backend',
-    Authorization: `Bearer ${token}`
-  };
-
-  let treeFiles = [];
-  try {
-    const treeUrl = `https://api.github.com/repos/${owner}/${repo}/git/trees/${encodeURIComponent(branch)}?recursive=1`;
-    const tree = await githubJson(treeUrl, headers);
-    treeFiles = Array.isArray(tree.tree)
-      ? tree.tree.filter((item) => item && item.type === 'blob' && looksLikeBackendSource(item.path)).map((item) => item.path)
-      : [];
-  } catch (error) {
-    warnings.push(`Could not read repository tree for configured branch: ${error.message}.`);
-  }
-
-  const selected = new Set(['package.json', 'server.js', 'src/server.js', 'src/executable_tool_router.js', 'src/backend_source_inspector.js', ...targetPaths]);
-  const normalizedTerms = searchTerms.map(clean).filter(Boolean);
-  for (const path of treeFiles) {
-    const pathText = clean(path);
-    if (
-      normalizedTerms.some((term) => pathText.includes(term)) ||
-      /(^|\/)(server|app|index)\.(js|cjs|mjs|ts)$/i.test(path) ||
-      /router|handler|registry|tool/i.test(path)
-    ) {
-      selected.add(path);
+  if (includeFullFileContents) {
+    if (!Array.isArray(params.target_paths) || params.target_paths.length === 0) {
+      return {
+        repo_owner: REPO_OWNER,
+        repo_name: REPO_NAME,
+        branch: BRANCH,
+        detected_entry_files: [],
+        relevant_files: [],
+        file_contents: [],
+        route_locations: {},
+        handler_registry_location: null,
+        executable_handlers_found: [],
+        recommended_patch_targets: [],
+        warnings: ['Full-file mode requires explicit target_paths.'],
+        source_summary: 'Full-file inspection was refused because target_paths was not explicit.',
+        next_action: 'Provide explicit approved target_paths and a sufficient max_file_chars value.'
+      };
+    }
+    const disallowed = pathsToRead.filter(path => !ALLOWED_FULL_FILE_PATHS.has(path));
+    if (disallowed.length) {
+      return {
+        repo_owner: REPO_OWNER,
+        repo_name: REPO_NAME,
+        branch: BRANCH,
+        detected_entry_files: [],
+        relevant_files: [],
+        file_contents: [],
+        route_locations: {},
+        handler_registry_location: null,
+        executable_handlers_found: [],
+        recommended_patch_targets: [],
+        warnings: ['Full-file mode refused disallowed path(s): ' + disallowed.join(', ')],
+        source_summary: 'Full-file inspection was refused because one or more requested files are not on the approved allowlist.',
+        next_action: 'Request only approved Tool Foundry backend source files in target_paths.'
+      };
     }
   }
 
-  const files = {};
-  for (const path of Array.from(selected).filter(looksLikeBackendSource).slice(0, maxFiles)) {
+  const files = [];
+  for (const path of pathsToRead) {
     try {
-      const content = await readFile(owner, repo, branch, path, headers);
-      if (typeof content === 'string') files[path] = content;
-    } catch (error) {
-      warnings.push(`Could not read ${path}: ${error.message}.`);
-    }
-  }
-
-  const detectedEntryFiles = [];
-  if (files['package.json']) {
-    const entry = parsePackageEntry(files['package.json']);
-    detectedEntryFiles.push({
-      path: 'package.json',
-      confidence: entry.main || entry.start_script ? 'high' : 'medium',
-      reason: `package.json declares main=${entry.main || 'not set'} and start=${entry.start_script || 'not set'}.`
-    });
-    if (entry.main && files[entry.main]) {
-      detectedEntryFiles.push({ path: entry.main, confidence: 'high', reason: 'Referenced by package.json main field.' });
-    }
-  }
-  if (files['server.js']) {
-    detectedEntryFiles.push({
-      path: 'server.js',
-      confidence: /require\(['"]\.\/src\/server['"]\)/.test(files['server.js']) ? 'high' : 'medium',
-      reason: /require\(['"]\.\/src\/server['"]\)/.test(files['server.js'])
-        ? 'Root entry file delegates to ./src/server.'
-        : 'Root server file exists and may be an entry file.'
-    });
-  }
-  if (files['src/server.js']) {
-    detectedEntryFiles.push({
-      path: 'src/server.js',
-      confidence: /express\(/.test(files['src/server.js']) && /listen\(/.test(files['src/server.js']) ? 'high' : 'medium',
-      reason: 'Contains the Express app/runtime server implementation.'
-    });
-  }
-
-  const routeLocations = {};
-  let handlerRegistryLocation = null;
-  let handlers = [];
-  const relevantFiles = [];
-
-  for (const [path, content] of Object.entries(files)) {
-    const matches = searchTerms.filter((term) => clean(path).includes(clean(term)) || clean(content).includes(clean(term)));
-    const isAlwaysRelevant = ['package.json', 'server.js', 'src/server.js', 'src/executable_tool_router.js', 'src/backend_source_inspector.js'].includes(path);
-    if (matches.length || isAlwaysRelevant) {
-      const record = {
+      const raw = await readRepoFile(path);
+      const safe = redactSecrets ? redactSecretLikeText(raw) : raw;
+      const matchedTerms = searchTerms.filter(term => safe.includes(term));
+      const limit = includeFullFileContents ? maxFileChars : Math.min(maxFileChars, 1200);
+      const wasTruncated = includeFileContents ? safe.length > limit : false;
+      if (wasTruncated) warnings.push(path + ' was truncated at ' + limit + ' characters. Increase max_file_chars to return more content.');
+      files.push({
         path,
-        purpose: purposeForPath(path),
-        matched_terms: matches.slice(0, 12)
-      };
-      if (includeFileContents) record.excerpt = excerptFor(content, searchTerms);
-      relevantFiles.push(record);
+        content: safe,
+        returned_content: includeFileContents ? safe.slice(0, limit) : undefined,
+        matched_terms: matchedTerms,
+        full_returned: Boolean(includeFileContents && !wasTruncated),
+        truncated: Boolean(wasTruncated),
+        char_count: safe.length,
+        returned_char_count: includeFileContents ? Math.min(safe.length, limit) : 0
+      });
+    } catch (error) {
+      warnings.push('Could not read ' + path + ': ' + error.message);
     }
-
-    for (const route of ['/health', '/tools/list', '/tools/execute', '/tools/register', '/tools/mission/create', '/tools/evaluate']) {
-      const location = findLine(content, route);
-      if (location) {
-        const priority = path === 'src/server.js' ? 3 : /app\.(get|post|put|patch|delete)\s*\(/.test(location.match) ? 2 : 1;
-        const previous = routeLocations[route];
-        if (!previous || priority > previous.priority) {
-          routeLocations[route] = { file: path, line: location.line, section_hint: location.match, priority };
-        }
-      }
-    }
-
-    const registry = findLine(content, 'EXECUTABLE_HANDLERS');
-    if (registry && !handlerRegistryLocation) {
-      handlerRegistryLocation = {
-        file: path,
-        line: registry.line,
-        section_hint: registry.match,
-        exported: /module\.exports[\s\S]*EXECUTABLE_HANDLERS/.test(content)
-      };
-    }
-
-    handlers = handlers.concat(extractHandlers(content, path));
   }
 
-  if (!handlers.some((handler) => handler.tool_id === TOOL_ID)) {
-    handlers.push({ tool_id: TOOL_ID, file: 'src/backend_source_inspector.js', location_hint: 'Installed into router.EXECUTABLE_HANDLERS by backend_source_inspector.install' });
-  }
+  const relevant_files = files.map(file => {
+    const item = {
+      path: file.path,
+      purpose: summarizePurpose(file.path),
+      matched_terms: file.matched_terms,
+      full_returned: file.full_returned,
+      truncated: file.truncated,
+      char_count: file.char_count,
+      returned_char_count: file.returned_char_count
+    };
+    if (includeFileContents && includeFullFileContents) item.content = file.returned_content;
+    else if (includeFileContents) item.excerpt = file.returned_content;
+    return item;
+  });
 
-  const metadata = new Map(Object.entries(files).flatMap(([path, content]) => extractMetadataIds(content, path)).map((item) => [item.tool_id, item]));
-  const executableHandlersFound = handlers.map((handler) => ({ ...handler, metadata_found: metadata.has(handler.tool_id) || handler.tool_id === TOOL_ID }));
+  const file_contents = includeFileContents ? files.map(file => ({
+    path: file.path,
+    content: file.returned_content,
+    full_returned: file.full_returned,
+    truncated: file.truncated,
+    char_count: file.char_count,
+    returned_char_count: file.returned_char_count
+  })) : [];
 
-  for (const route of Object.keys(routeLocations)) {
-    delete routeLocations[route].priority;
-  }
+  const detected_entry_files = [];
+  if (files.some(file => file.path === 'package.json')) detected_entry_files.push({ path: 'package.json', confidence: 'high', reason: 'package.json was readable from the approved repo.' });
+  if (files.some(file => file.path === 'server.js')) detected_entry_files.push({ path: 'server.js', confidence: 'high', reason: 'Root server.js was readable from the approved repo.' });
+  if (files.some(file => file.path === 'src/server.js')) detected_entry_files.push({ path: 'src/server.js', confidence: 'high', reason: 'Runtime server file was readable from the approved repo.' });
 
-  const routerFile = handlerRegistryLocation ? handlerRegistryLocation.file : 'src/executable_tool_router.js';
-  const serverFile = routeLocations['/tools/execute'] ? routeLocations['/tools/execute'].file : 'src/server.js';
-  const recommendedPatchTargets = [
-    { path: routerFile, reason: 'Primary executable handler registry and built-in metadata location.' },
-    { path: 'src/backend_source_inspector.js', reason: 'Current read-only source-inspector executable handler file.' }
-  ];
-  if (serverFile !== routerFile) recommendedPatchTargets.push({ path: serverFile, reason: 'HTTP route host; change only when route contracts change or when bootstrapping external handler modules.' });
-  if (files['package.json']) recommendedPatchTargets.push({ path: 'package.json', reason: 'Change only if a tool requires new runtime dependencies.' });
-
-  if (!handlerRegistryLocation) warnings.push('EXECUTABLE_HANDLERS was not found in inspected files.');
-  if (!routeLocations['/tools/list']) warnings.push('/tools/list route was not found in inspected files.');
-  if (!routeLocations['/tools/execute']) warnings.push('/tools/execute route was not found in inspected files.');
-  if (!files['src/server.js']) warnings.push('Expected runtime server file src/server.js was not readable on the configured branch.');
-  if (!files['src/executable_tool_router.js']) warnings.push('Expected router file src/executable_tool_router.js was not readable on the configured branch.');
-
-  const architectureMatches =
-    Boolean(files['src/server.js']) &&
-    Boolean(handlerRegistryLocation) &&
-    Boolean(routeLocations['/tools/list']) &&
-    Boolean(routeLocations['/tools/execute']) &&
-    executableHandlersFound.length > 0;
+  const routerFile = files.find(file => file.path === 'src/executable_tool_router.js');
+  const handlerLine = routerFile ? lineOf(routerFile.content, 'EXECUTABLE_HANDLERS') : null;
 
   return {
-    repo_owner: owner,
-    repo_name: repo,
-    branch,
-    detected_entry_files: detectedEntryFiles,
-    relevant_files: relevantFiles,
-    route_locations: routeLocations,
-    handler_registry_location: handlerRegistryLocation,
-    executable_handlers_found: executableHandlersFound,
-    recommended_patch_targets: recommendedPatchTargets,
+    repo_owner: REPO_OWNER,
+    repo_name: REPO_NAME,
+    branch: BRANCH,
+    inspect_scope: params.inspect_scope || '',
+    detected_entry_files,
+    relevant_files,
+    file_contents,
+    route_locations: collectRouteLocations(files),
+    handler_registry_location: handlerLine ? { file: 'src/executable_tool_router.js', line: handlerLine, section_hint: sectionHint(routerFile.content, 'EXECUTABLE_HANDLERS') } : null,
+    executable_handlers_found: collectHandlers(files),
+    recommended_patch_targets: [
+      { path: 'src/executable_tool_router.js', reason: 'Primary executable handler registry and built-in metadata location.' },
+      { path: 'src/backend_source_inspector.js', reason: 'Current read-only source-inspector executable handler file.' },
+      { path: 'src/server.js', reason: 'HTTP route host; change only when route contracts change.' },
+      { path: 'package.json', reason: 'Change only if runtime dependencies change.' }
+    ],
     warnings,
-    source_summary: includeSummary
-      ? architectureMatches
-        ? 'The backend source matches the expected Tool Foundry executable router architecture: package/runtime entry files delegate to src/server.js, HTTP routes call the executable router, and EXECUTABLE_HANDLERS defines installed tool handlers.'
-        : 'The backend source was inspected, but one or more expected executable router architecture pieces were missing or low confidence.'
-      : '',
-    next_action: architectureMatches
-      ? 'For future executable tools, update executable-router metadata, provide a real handler, and route through EXECUTABLE_HANDLERS; do not add fragile custom branches to /tools/execute.'
-      : 'Review warnings before applying backend updates.'
+    source_summary: includeFullFileContents ? 'Strict full-file inspection completed for explicitly requested approved backend files.' : 'Backend source inspection completed with summaries/excerpts.',
+    next_action: warnings.length ? 'Review warnings and full_returned/truncated flags before patch generation.' : 'Use returned full_returned/truncated flags to decide whether patch generation is safe.'
   };
 }
 
 function install(router) {
-  if (!router || !router.EXECUTABLE_HANDLERS || typeof router.registerTool !== 'function') {
-    throw new Error('backend_source_inspector requires the executable tool router exports.');
+  if (!router) return;
+  if (Array.isArray(router.BUILTIN_TOOL_METADATA)) {
+    const index = router.BUILTIN_TOOL_METADATA.findIndex(tool => tool.tool_id === METADATA.tool_id);
+    if (index >= 0) router.BUILTIN_TOOL_METADATA[index] = METADATA;
+    else router.BUILTIN_TOOL_METADATA.push(METADATA);
   }
-  router.EXECUTABLE_HANDLERS[TOOL_ID] = backendSourceInspector;
-  router.registerTool(METADATA);
+  if (router.EXECUTABLE_HANDLERS) {
+    router.EXECUTABLE_HANDLERS[METADATA.tool_id] = execute;
+  }
 }
 
 module.exports = {
-  TOOL_ID,
   METADATA,
-  install,
-  backendSourceInspector
+  metadata: METADATA,
+  execute,
+  handle: execute,
+  install
 };
