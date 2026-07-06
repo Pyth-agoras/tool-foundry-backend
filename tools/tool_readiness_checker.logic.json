@@ -1,0 +1,28 @@
+{
+  "approval_triggers": [
+    "public deployment",
+    "paid api",
+    "paid service",
+    "store personal data",
+    "store sensitive data",
+    "send email",
+    "send message",
+    "publish content",
+    "external account",
+    "real-world action",
+    "increase permissions",
+    "autonomous schedule",
+    "scheduled automation"
+  ],
+  "risk_rules": {
+    "low": "Read-only analysis, planning, classification, summarization, or readiness checks with no persistent storage and no external side effects.",
+    "medium": "Uses external accounts, public deployment, paid services, messaging, publishing, persistent storage, or operational changes with owner approval.",
+    "high": "Handles sensitive data at scale, financial transactions, legal/medical/financial decisions, destructive actions, surveillance, or autonomous real-world impact."
+  },
+  "matching_rules": {
+    "exact": "Same primary capability and approved status.",
+    "strong": "Approved tool covers most of the requested goal with minor differences.",
+    "partial": "Approved or non-approved tool covers part of the requested workflow but not enough alone.",
+    "none": "No registry entry materially covers the requested capability."
+  }
+}
