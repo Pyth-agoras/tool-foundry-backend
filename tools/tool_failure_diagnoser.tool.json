@@ -1,0 +1,12 @@
+{
+  "tool_id": "tool_failure_diagnoser",
+  "name": "Tool Failure Diagnoser",
+  "purpose": "Diagnose failed Tool Foundry tool builds, installs, deployments, registrations, or executions, then recommend the exact repair path in plain English.",
+  "status": "Testing",
+  "risk_level": "low",
+  "version": "0.1.0",
+  "approval_state": "pending_execution_test",
+  "builtin": false,
+  "input_schema_description": "failed_tool_id; failure_stage; error_message; tool_status; registry_result; execution_result; deploy_result; health_result; tools_list_result; source_inspection_summary; recent_action_summary; user_goal",
+  "output_schema_description": "failure_category; likely_root_cause; confidence_level; evidence; repair_path; exact_next_action; owner_approval_needed; should_retry; should_rebuild; should_redeploy; should_mark_needs_revision; should_mark_approved; recommended_tool_to_use_next; plain_english_summary"
+}
