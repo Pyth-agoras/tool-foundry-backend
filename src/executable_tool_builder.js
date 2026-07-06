@@ -3,115 +3,85 @@
 const METADATA = {
   tool_id: 'executable_tool_builder',
   name: 'Executable Tool Builder',
-  purpose: 'Generate explicit executable-router backend file payloads for new Tool Foundry tools.',
+  purpose: 'Generate explicit executable-router backend file payloads for Tool Foundry tools, including deterministic decision/orchestration handlers.',
   status: 'Approved',
   risk_level: 'medium',
-  version: '0.2.1',
+  version: '0.3.1',
   approval_state: 'approved',
   builtin: false,
   input_schema_description: 'tool_id; tool_name; tool_purpose; mission_text; required_inputs; required_outputs; safety_boundaries; source_inspection_summary; source_inspection_result; relevant_files; file_contents; full_file_contents; source_files; current_router_source; router_source; existing_router_pattern; test_case; user_constraints; context.',
   output_schema_description: 'tool_id; recommended_files_payload; handler_file_path; router_update_path; router_update_summary; handler_summary; registry_metadata; execution_test_payload; safety_notes; approval_required; next_action.'
 };
 
-function txt(v) { if (v === null || v === undefined) return ''; if (typeof v === 'string') return v; try { return JSON.stringify(v, null, 2); } catch (e) { return String(v); } }
-function arr(v) { if (Array.isArray(v)) return v.map(String).filter(Boolean); if (typeof v === 'string') return v.split(/[;,\n]/).map(s => s.trim()).filter(Boolean); return []; }
-function id(v) { return String(v || '').trim().toLowerCase().replace(/[^a-z0-9_]+/g, '_').replace(/^_+|_+$/g, '') || 'new_tool'; }
-function title(v) { return id(v).split('_').map(s => s.charAt(0).toUpperCase() + s.slice(1)).join(' '); }
-function j(v) { return JSON.stringify(v, null, 2); }
+function text(v){if(v===null||v===undefined)return'';if(typeof v==='string')return v;try{return JSON.stringify(v,null,2)}catch(e){return String(v)}}
+function arr(v){if(Array.isArray(v))return v.map(String).map(s=>s.trim()).filter(Boolean);if(typeof v==='string')return v.split(/[;,\n]/).map(s=>s.trim()).filter(Boolean);return[]}
+function safeId(v){return String(v||'').trim().toLowerCase().replace(/[^a-z0-9_]+/g,'_').replace(/^_+|_+$/g,'')||'new_tool'}
+function title(v){return safeId(v).split('_').map(s=>s.charAt(0).toUpperCase()+s.slice(1)).join(' ')}
+function js(v){return JSON.stringify(v,null,2)}
+function has(v,terms){const s=text(v).toLowerCase();return terms.some(t=>s.includes(String(t).toLowerCase()))}
+function isRouter(s){return typeof s==='string'&&s.includes('EXECUTABLE_HANDLERS')&&s.includes('installExternal')&&s.includes('routerApi')&&s.includes('module.exports')}
+function decode(s){if(typeof s!=='string')return'';if(isRouter(s))return s;const e=s.replace(/\\n/g,'\n').replace(/\\"/g,'"').replace(/\\'/g,"'");if(isRouter(e))return e;try{const t=s.trim();if((t.startsWith('{')||t.startsWith('['))&&t.includes('EXECUTABLE_HANDLERS'))return extractRouterSource(JSON.parse(t))}catch(_e){}return''}
+function collect(v,out,seen){if(v==null)return;if(!seen)seen=new Set();if(typeof v==='string'){const s=decode(v);if(s)out.push(s);return}if(typeof v!=='object'||seen.has(v))return;seen.add(v);const p=String(v.path||v.file||v.filename||v.router_file_path||'');const relevant=p==='src/executable_tool_router.js'||p.endsWith('/src/executable_tool_router.js')||Object.prototype.hasOwnProperty.call(v,'router_source')||text(v).includes('EXECUTABLE_HANDLERS');if(relevant)['content','full_content','full_file_content','returned_content','source','text','router_source'].forEach(k=>{const s=decode(v[k]);if(s)out.push(s)});Object.keys(v).forEach(k=>collect(v[k],out,seen))}
+function extractRouterSource(input){const out=[];['source_inspection_summary','source_inspection_result','relevant_files','file_contents','full_file_contents','source_files','current_router_source','router_source','existing_router_pattern','context'].forEach(k=>collect(input&&input[k],out));collect(input,out);return out.find(isRouter)||''}
+function updateRouter(source,toolId){if(!source)return{content:'',already:false,summary:'Router source was not found in the provided input fields.'};const call=`installExternal('./${toolId}')`;if(source.includes(call))return{content:source,already:true,summary:`${toolId} is already wired; no router update is needed.`};const re=/routerApi\.external_install_results\s*=\s*\[([\s\S]*?)\];/m;if(!re.test(source))return{content:'',already:false,summary:'The router external install results array was not found.'};return{content:source.replace(re,(m,inner)=>`routerApi.external_install_results = [${inner.replace(/\s*$/,'')}, ${call} ];`),already:false,summary:`Router update adds ${call} once using the existing installExternal pattern.`}}
+function decisionTool(input,toolId){return has([toolId,input.tool_name,input.tool_purpose,input.purpose,input.capability_needed,input.mission_text,input.required_outputs,input.context].map(text).join(' '),['orchestrator','governor','validator','auditor','diagnoser','resolver','planner','router','workflow','readiness','quality','approval','decision','next action','next_required_tool','next_required_action'])}
+function metadata(input,toolId,toolName,purpose){return{tool_id:toolId,name:toolName,purpose:String(purpose||'Execute a Tool Foundry backend capability.').slice(0,700),status:'Testing',risk_level:'low',version:'0.1.0',approval_state:'pending_execution_test',builtin:false,input_schema_description:arr(input.required_inputs).join('; ')||'input; user_goal; context.',output_schema_description:arr(input.required_outputs).join('; ')||'ok; result; plain_english_summary.'}}
 
-function isRouterSource(s) {
-  return typeof s === 'string' && s.includes('EXECUTABLE_HANDLERS') && s.includes('installExternal') && s.includes('module.exports') && s.includes('routerApi');
-}
-function decodeSource(s) {
-  if (typeof s !== 'string') return '';
-  if (isRouterSource(s)) return s;
-  const expanded = s.replace(/\\n/g, '\n').replace(/\\"/g, '"').replace(/\\'/g, "'");
-  if (isRouterSource(expanded)) return expanded;
-  const t = s.trim();
-  if ((t.startsWith('{') || t.startsWith('[')) && t.includes('executable_tool_router')) {
-    try { return extractRouterContent(JSON.parse(t)); } catch (e) {}
-  }
-  return '';
-}
-function collectSources(v, out, seen) {
-  if (v === null || v === undefined) return;
-  if (!seen) seen = new Set();
-  if (typeof v === 'string') { const c = decodeSource(v); if (c) out.push(c); return; }
-  if (typeof v !== 'object' || seen.has(v)) return;
-  seen.add(v);
-  const p = String(v.path || v.file || v.filename || '');
-  if (p === 'src/executable_tool_router.js' || p.endsWith('/src/executable_tool_router.js')) {
-    ['content','full_content','full_file_content','returned_content','source','text','excerpt'].forEach(k => { const c = decodeSource(v[k]); if (c) out.push(c); });
-  }
-  Object.keys(v).forEach(k => collectSources(v[k], out, seen));
-}
-function extractRouterContent(input) {
-  const out = [];
-  ['router_file_content','existing_router_content','router_content','current_router_source','router_source','existing_router_pattern','source_inspection_summary','source_inspection_result','relevant_files','file_contents','full_file_contents','source_files','context'].forEach(k => collectSources(input && input[k], out));
-  return out.find(isRouterSource) || '';
-}
-function updateRouter(source, toolId) {
-  if (!source) return { content: '', already: false, summary: 'Router source was not found in the provided input fields.' };
-  const call = `installExternal('./${toolId}')`;
-  if (source.includes(call)) return { content: source, already: true, summary: `${toolId} is already wired; no router update is needed.` };
-  const re = /routerApi\.external_install_results\s*=\s*\[([\s\S]*?)\];/m;
-  if (!re.test(source)) return { content: '', already: false, summary: 'The installExternal results array was not found in the router source.' };
-  return {
-    content: source.replace(re, (m, inner) => `routerApi.external_install_results = [${inner.replace(/\s*$/, '')}, ${call} ];`),
-    already: false,
-    summary: `Router update adds ${call} once using the existing installExternal pattern.`
-  };
-}
+function decisionHandler(m){return `'use strict';
 
-function workflowHandler(metadata) {
-  return `'use strict';\n\nconst METADATA = ${j(metadata)};\nfunction s(v){try{return typeof v==='string'?v:JSON.stringify(v)}catch(e){return String(v||'')}}\nfunction l(v){return Array.isArray(v)?v.map(String):typeof v==='string'?v.split(/[;\\n]/).map(x=>x.trim()).filter(Boolean):[]}\nfunction h(t, terms){const n=s(t).toLowerCase();return terms.some(x=>n.includes(String(x).toLowerCase()))}\nasync function execute(input={}){\n  const all=[input.user_goal,input.current_tool_id,l(input.attempted_steps).join(' | '),l(input.repeated_failure_patterns).join(' | '),input.latest_error_message,input.current_tool_status,input.registry_result,input.execution_result,input.deploy_result,input.health_result,input.tools_list_result,input.source_inspection_result,input.builder_result,input.validator_result,input.quality_test_result,input.recent_action_summary,input.owner_constraints].map(s).join(' | ');\n  let loop='unclear_failure', blocker='unclear failure evidence', next='tool_failure_diagnoser', action='Use tool_failure_diagnoser first because the real blocker is unclear.', stop=['repeating the same failed action without new evidence'], seq=['Pause repeated retries','Run tool_failure_diagnoser with full evidence','Follow the diagnosed repair path'];\n  if(h(all,['builder returned empty files payload','recommended_files_payload: []','recommended_files_payload was empty','empty files payload','no files payload'])){loop='builder_output_failure';blocker='executable_tool_builder output failure';next='executable_tool_builder';action='Repair or rerun executable_tool_builder so it produces a complete handler and router-wired files payload, then rerun tool_installation_validator.';stop=['continuing install without a valid files payload','calling foundry_operator before tool_installation_validator passes','creating another mission for the same unresolved dependency'];seq=['Pause the current install attempt','Repair or rerun executable_tool_builder with full source inspection output','Confirm recommended_files_payload includes handler and router wiring','Run tool_installation_validator','Resume install only after can_install is true'];}\n  else if(h(all,['missing router wiring','not wired','executable_handlers','no executable handler','handler not installed'])){loop='missing_router_wiring';blocker='missing executable handler or EXECUTABLE_HANDLERS router wiring';next='backend_source_inspector';action='Use backend_source_inspector to confirm wiring, then generate a router repair and validate it before deployment.';stop=['approving the tool before live execution passes','rebuilding the mission instead of repairing router wiring'];seq=['Inspect router wiring','Generate corrected handler/router payload','Validate payload','Deploy after approval','Run live execution'];}\n  else if(h(all,['deployment adoption','old deployment','tools/list still old','health still old','not adopted'])){loop='deployment_adoption_delay';blocker='deployment adoption delay or stale runtime';next='foundry_operator';action='Use foundry_operator deployment recheck and verify /health and /tools/list before rebuilding.';stop=['rebuilding while deployment adoption is unconfirmed'];seq=['Pause rebuild','Run foundry_operator deployment recheck','Verify /health','Verify /tools/list','Continue only after adoption is confirmed'];}\n  const pause=loop!=='unclear_failure';\n  return {dead_end_detected:pause,loop_pattern:loop,real_blocker:blocker,wrong_actions_to_stop:stop,correct_next_action:action,recommended_tool_to_use_next:next,repair_sequence:seq,owner_approval_needed:next==='foundry_operator',retry_allowed:!pause,should_pause_current_workflow:pause,completion_path:seq.join(' -> '),plain_english_summary:pause?'A non-productive Tool Foundry path was detected. Stop the repeated action and address the real blocker before resuming.':'The blocker is not clear enough to choose a repair safely. Run tool_failure_diagnoser first.',ok:true};\n}\nfunction install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA);}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return {installed:true,tool_id:METADATA.tool_id};}\nmodule.exports={METADATA,metadata:METADATA,execute,handle:execute,install};\n`;
+const METADATA=${js(m)};
+function text(v){if(v===null||v===undefined)return'';if(typeof v==='string')return v;try{return JSON.stringify(v)}catch(e){return String(v)}}
+function has(v,terms){const s=text(v).toLowerCase();return terms.some(t=>s.includes(String(t).toLowerCase()))}
+function flag(v,keys){if(v===true||v===false)return v;if(!v)return false;if(typeof v==='object')return keys.some(k=>v[k]===true||String(v[k]).toLowerCase()==='true'||String(v[k]).toLowerCase()==='passed'||String(v[k]).toLowerCase()==='approved');const s=text(v).toLowerCase();return keys.some(k=>s.includes(String(k).toLowerCase()+': true')||s.includes(String(k).toLowerCase()+'=true'))||has(s,['passed','approved','can_install true','can_install: true'])}
+function avail(input,id){const raw=Array.isArray(input.available_tools)?input.available_tools:text(input.available_tools).split(/[;,\\n]/);return raw.map(String).map(x=>x.trim()).includes(id)}
+function rem(next){const all=['autonomy_governor','tool_readiness_checker','backend_source_inspector','executable_tool_builder','tool_installation_validator','foundry_operator','live_execution','tool_quality_tester','approval','tool_registry_auditor'];const i=Math.max(0,all.indexOf(next));return all.slice(i)}
+async function execute(input={}){
+  const combined=[input.user_goal,input.requested_capability,input.current_tool_id,input.current_tool_status,input.workflow_stage,input.risk_level,input.owner_standing_rules,input.registry_result,input.readiness_result,input.autonomy_result,input.source_inspection_result,input.builder_result,input.validator_result,input.operator_result,input.quality_result,input.failure_result,input.dead_end_result,input.recent_action_summary].map(text).join(' | ');
+  const stage=text(input.workflow_stage||input.current_tool_status).toLowerCase();
+  const risk=text(input.risk_level||'low').toLowerCase();
+  const gates=['autonomy_governor confirms safe automation or owner approval is present','tool_readiness_checker checks existing approved capability','backend_source_inspector returns full untruncated source before source changes','executable_tool_builder returns explicit handler and router payload files','tool_installation_validator returns can_install=true before foundry_operator','foundry_operator completes install or redeploy without blockers','live execution passes before approval','tool_quality_tester passes before approval','tool_registry_auditor checks registry health after approval or cleanup'];
+  const auto=flag(input.autonomy_result,['can_proceed_automatically','can_install','can_redeploy','can_test']);
+  const owner=risk==='high'||has(combined,['unclear risk','must_ask_owner','owner approval required']);
+  const readiness=Boolean(input.readiness_result)||has(stage,['readiness']);
+  const source=Boolean(input.source_inspection_result)||has(stage,['source']);
+  const built=Boolean(input.builder_result)||has(stage,['builder']);
+  const valid=flag(input.validator_result,['can_install']);
+  const vfail=has(input.validator_result,['can_install:false','can_install false','validation_status":"failed','validation_status: failed','failed']);
+  const operated=flag(input.operator_result,['ok','completed','deployed','redeployed']);
+  const live=has(combined,['live execution passed','execution passed','tool execution passed']);
+  const quality=flag(input.quality_result,['should_mark_approved','quality_passed','passed']);
+  const failure=(Boolean(input.failure_result)||has(combined,['failure','failed','error']))&&!quality;
+  const loop=Boolean(input.dead_end_result)||has(input.recent_action_summary,['loop','repeat','repeated','stalled','dead end','dead-end']);
+  const approved=has(input.current_tool_status,['approved'])||has(input.quality_result,['should_mark_approved:true','should_mark_approved true']);
+  let workflow_status='planning',next_required_tool='autonomy_governor',next_required_action='Run autonomy_governor first with risk, approval, and safety facts.',current_blocker=null,should_generate_files=false,should_validate_payload=false,should_install=false,should_redeploy=false,should_test=false,should_quality_check=false,should_approve=false,should_stop=false,can=true;
+  if(loop){workflow_status='blocked';next_required_tool='workflow_dead_end_resolver';next_required_action='Use workflow_dead_end_resolver before repeating the same Tool Foundry action.';current_blocker='Workflow appears to be looping or stalled.';should_stop=true;can=false}
+  else if(failure&&!valid&&!live&&!quality){workflow_status='blocked';next_required_tool='tool_failure_diagnoser';next_required_action='Use tool_failure_diagnoser to classify the failed stage before retrying build, install, or approval.';current_blocker='A failure is present and has not been repaired.';should_stop=true;can=false}
+  else if(!input.autonomy_result&&(stage===''||stage.includes('planning')||owner||risk==='low')){workflow_status='planning';next_required_tool='autonomy_governor';next_required_action='Run autonomy_governor first with risk, approval, and safety facts.'}
+  else if(!readiness){workflow_status='readiness_required';next_required_tool='tool_readiness_checker';next_required_action='Check whether an approved existing tool already satisfies the requested capability.'}
+  else if(!source){workflow_status='source_inspection_required';next_required_tool='backend_source_inspector';next_required_action='Inspect backend source in strict full-file mode before generating source changes.'}
+  else if(!built){workflow_status='ready_to_generate_files';next_required_tool='executable_tool_builder';next_required_action='Generate explicit handler and router payload files using the full source inspection result.';should_generate_files=true}
+  else if(vfail){workflow_status='blocked';next_required_tool='executable_tool_builder';next_required_action='Repair or regenerate the files payload, then rerun tool_installation_validator. Do not call foundry_operator.';current_blocker='tool_installation_validator blocked the payload.';should_validate_payload=true;should_stop=true;can=false}
+  else if(!valid){workflow_status='validation_required';next_required_tool='tool_installation_validator';next_required_action='Validate the proposed file payload before foundry_operator.';should_validate_payload=true}
+  else if(!operated){workflow_status='ready_to_install';next_required_tool='foundry_operator';next_required_action='Use foundry_operator only because validation passed and approval or autonomy is available.';should_install=true;should_redeploy=true}
+  else if(!live){workflow_status='live_test_required';next_required_tool='live_execution';next_required_action='Run live execution tests for the new tool and required foundation tools before approval.';should_test=true}
+  else if(!quality){workflow_status='quality_check_required';next_required_tool='tool_quality_tester';next_required_action='Run tool_quality_tester after live execution passes.';should_quality_check=true}
+  else if(!approved){workflow_status='ready_for_approval';next_required_tool='registerTool';next_required_action='Mark the tool Approved only after live execution and quality testing have passed.';should_approve=true}
+  else{workflow_status='approved_or_cleanup';next_required_tool='tool_registry_auditor';next_required_action='Audit registry health after approval or cleanup.'}
+  const path=rem(next_required_tool);const tools=path.filter(x=>x==='live_execution'||x==='approval'||x===next_required_tool||avail(input,x));
+  return{workflow_status,next_required_tool,next_required_action,can_continue_automatically:Boolean(can&&!owner&&!should_stop),owner_approval_needed:Boolean(owner&&!auto),owner_approval_reason:owner&&!auto?'Risk or approval state is unclear, so only the specific owner-level decision should be requested.':'',current_blocker,completion_path:(tools.length?tools:path).join(' -> '),tools_to_call_next:tools.length?tools:path,gates_that_must_pass:gates,should_create_mission:false,should_generate_files,should_validate_payload,should_install,should_redeploy,should_test,should_quality_check,should_approve,should_stop,plain_english_summary:current_blocker?'The workflow should stop at the current blocker and use the recommended Tool Foundry repair step before continuing.':'The workflow can continue through the next Tool Foundry gate without manual file handling or repeated owner back-and-forth.'};
 }
-function genericHandler(metadata, outputs) {
-  const defaults = {};
-  arr(outputs).forEach(name => {
-    const n = String(name).toLowerCase();
-    defaults[name] = n.includes('summary') ? 'Generated response.' : n.includes('list') || n.includes('items') ? [] : n.includes('count') ? 0 : null;
-  });
-  return `'use strict';\n\nconst METADATA = ${j(metadata)};\nasync function execute(input={}){return Object.assign(${j(defaults)}, {ok:true, received_input_keys:Object.keys(input||{}), plain_english_summary:'Executable handler completed.'});}\nfunction install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA);}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return {installed:true,tool_id:METADATA.tool_id};}\nmodule.exports={METADATA,metadata:METADATA,execute,handle:execute,install};\n`;
-}
-function buildHandler(spec) {
-  const toolId = id(spec.tool_id);
-  const metadata = {
-    tool_id: toolId,
-    name: spec.tool_name || title(toolId),
-    purpose: spec.tool_purpose || spec.purpose || 'Execute a Tool Foundry backend capability.',
-    status: 'Testing',
-    risk_level: 'low',
-    version: '0.1.0',
-    approval_state: 'pending_execution_test',
-    builtin: false,
-    input_schema_description: arr(spec.required_inputs).join('; ') || 'input; user_goal; context.',
-    output_schema_description: arr(spec.required_outputs).join('; ') || 'ok; result; plain_english_summary.'
-  };
-  return toolId === 'workflow_dead_end_resolver' ? workflowHandler(metadata) : genericHandler(metadata, spec.required_outputs);
-}
-function testPayload(spec, toolId) {
-  if (toolId === 'workflow_dead_end_resolver') return { tool_id: toolId, input: { user_goal: 'Install tool_registry_auditor.', current_tool_id: 'tool_registry_auditor', attempted_steps: ['created mission','called executable_tool_builder','builder returned empty files payload','tool_installation_validator blocked install','attempted to continue install anyway'], repeated_failure_patterns: ['mission created but no files payload','installer called before valid payload','new tool install attempted without required files'], latest_error_message: 'recommended_files_payload was empty and validator returned can_install: false.', current_tool_status: 'Draft', registry_result: 'Tool mission exists but tool is not installed.', execution_result: 'Tool cannot execute because it is not installed.', builder_result: 'recommended_files_payload: []', validator_result: 'can_install: false', recent_action_summary: 'The workflow tried to proceed without a valid files payload.' } };
-  const input = {};
-  arr(spec.required_inputs).forEach(k => input[k] = `sample ${k}`);
-  return { tool_id: toolId, input };
-}
-async function execute(input = {}) {
-  const toolId = id(input.tool_id || input.proposed_tool_id || input.tool_name);
-  const toolName = input.tool_name || title(toolId);
-  const purpose = input.tool_purpose || input.purpose || input.capability_needed || input.mission_text || `Executable handler for ${toolName}.`;
-  const handlerPath = `src/${toolId}.js`;
-  const routerPath = 'src/executable_tool_router.js';
-  const router = updateRouter(extractRouterContent(input), toolId);
-  const handler = buildHandler({ ...input, tool_id: toolId, tool_name: toolName, tool_purpose: purpose });
-  const registry_metadata = { tool_id: toolId, name: toolName, purpose: String(purpose).slice(0,500), status: 'Testing', risk_level: 'low', version: '0.1.0', approval_state: 'pending_execution_test', builtin: false, input_schema_description: arr(input.required_inputs).join('; ') || 'input; user_goal; context.', output_schema_description: arr(input.required_outputs).join('; ') || 'ok; result; plain_english_summary.' };
-  const files = [{ path: handlerPath, content: handler }];
-  if (router.content && !router.already) files.push({ path: routerPath, content: router.content });
-  const missing = [];
-  if (!handler.includes('module.exports')) missing.push('handler module export');
-  if (!router.content) missing.push('full router source content from backend_source_inspector');
-  if (router.content && !router.content.includes(`./${toolId}`)) missing.push('router external install wiring');
-  return { ok: missing.length === 0, tool_id: toolId, recommended_files_payload: files, handler_file_path: handlerPath, router_update_path: routerPath, router_update_summary: router.summary, handler_summary: `Generated executable handler for ${toolId} plus router update when needed.`, registry_metadata, execution_test_payload: testPayload(input, toolId), safety_notes: ['Generated payload only; no files are modified by executable_tool_builder.','Use tool_installation_validator before foundry_operator.','Router updates preserve existing source and use the existing installExternal executable-router pattern.','If the target tool is already wired, no duplicate router install line is generated.'], approval_required: true, next_action: missing.length ? `Provide missing input before installation: ${missing.join(', ')}.` : 'Validate this payload with tool_installation_validator before calling foundry_operator.', missing_requirements: missing };
-}
-function install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA);}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return {installed:true,tool_id:METADATA.tool_id};}
-module.exports = { METADATA, metadata: METADATA, execute, handle: execute, install };
+function install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA)}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return{installed:true,tool_id:METADATA.tool_id}}
+module.exports={METADATA,metadata:METADATA,execute,handle:execute,install};
+`}
+
+function genericHandler(m,outputs){const d={};arr(outputs).forEach(k=>{const n=k.toLowerCase();if(n.includes('summary'))d[k]='Executable handler completed.';else if(n.includes('status'))d[k]='completed';else if(n.startsWith('should_')||n.includes('_needed')||n.includes('_required')||n.includes('can_'))d[k]=false;else if(n.includes('tools')||n.includes('items')||n.includes('list')||n.includes('path')||n.includes('gates'))d[k]=[];else if(n.includes('count')||n.includes('score'))d[k]=0;else d[k]=''});if(!Object.prototype.hasOwnProperty.call(d,'plain_english_summary'))d.plain_english_summary='Executable handler completed.';return `'use strict';
+
+const METADATA=${js(m)};
+async function execute(input={}){const result=${js(d)};result.ok=true;result.received_input_keys=Object.keys(input||{});if(!result.plain_english_summary)result.plain_english_summary='Executable handler completed.';return result}
+function install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA)}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return{installed:true,tool_id:METADATA.tool_id}}
+module.exports={METADATA,metadata:METADATA,execute,handle:execute,install};
+`}
+function makeTestPayload(input,toolId){if(decisionTool(input,toolId))return{tool_id:toolId,input:{user_goal:'Create a low-risk internal backend tool.',requested_capability:'A harmless note-cleanup tool.',workflow_stage:'planning',risk_level:'low',owner_standing_rules:'Low-risk internal Tool Foundry work may proceed automatically when autonomy_governor confirms it is safe, install validation passes, live execution passes, and quality testing passes.',available_tools:['tool_readiness_checker','autonomy_governor','backend_source_inspector','executable_tool_builder','tool_installation_validator','foundry_operator','tool_quality_tester','tool_failure_diagnoser','workflow_dead_end_resolver','tool_registry_auditor'],recent_action_summary:'The user wants the Tool Foundry to choose the correct workflow without repeated back-and-forth.'}};const p={};arr(input.required_inputs).forEach(k=>p[k]='sample '+k);return{tool_id:toolId,input:p}}
+async function execute(input={}){const toolId=safeId(input.tool_id||input.proposed_tool_id||input.tool_name);const toolName=input.tool_name||title(toolId);const purpose=input.tool_purpose||input.purpose||input.capability_needed||input.mission_text||`Executable handler for ${toolName}.`;const handlerPath=`src/${toolId}.js`;const routerPath='src/executable_tool_router.js';const router=updateRouter(extractRouterSource(input),toolId);const m=metadata(input,toolId,toolName,purpose);const handler=decisionTool(input,toolId)?decisionHandler(m):genericHandler(m,input.required_outputs);const files=[{path:handlerPath,content:handler}];if(router.content&&!router.already)files.push({path:routerPath,content:router.content});const missing=[];if(!handler.includes('module.exports'))missing.push('handler module export');if(!handler.includes('function install(router)'))missing.push('handler install(router) function');if(decisionTool(input,toolId)&&(handler.includes('workflow_status:null')||handler.includes('next_required_tool:null')))missing.push('real decision logic');if(!router.content)missing.push('full router source content from backend_source_inspector');if(router.content&&!router.content.includes(`./${toolId}`))missing.push('router external install wiring');return{ok:missing.length===0,tool_id:toolId,recommended_files_payload:files,handler_file_path:handlerPath,router_update_path:routerPath,router_update_summary:router.summary,handler_summary:decisionTool(input,toolId)?`Generated deterministic decision handler for ${toolId} plus router update when needed.`:`Generated executable handler for ${toolId} plus router update when needed.`,registry_metadata:m,execution_test_payload:makeTestPayload(input,toolId),safety_notes:['Generated payload only; no files are modified by executable_tool_builder.','Use tool_installation_validator before foundry_operator.','Router updates preserve existing source and use the existing installExternal executable-router pattern.','Decision-tool mode returns deterministic next-action fields and avoids mostly-empty outputs.','If the target tool is already wired, no duplicate router install line is generated.'],approval_required:true,next_action:missing.length?`Provide missing input before installation: ${missing.join(', ')}.`:'Validate this payload with tool_installation_validator before calling foundry_operator.',missing_requirements:missing}}
+function install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA)}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return{installed:true,tool_id:METADATA.tool_id}}
+module.exports={METADATA,metadata:METADATA,execute,handle:execute,install};
