@@ -1,0 +1,11 @@
+{
+  "tool_id": "tool_readiness_checker",
+  "name": "Tool Readiness Checker",
+  "purpose": "Given a proposed tool idea, check whether the Tool Foundry already has the needed capabilities, whether a new tool is needed, what risk level it has, whether it requires approval, and what the next action should be.",
+  "status": "Approved",
+  "version": "0.1.0",
+  "risk_level": "low",
+  "approval_state": "approved",
+  "input_schema_description": "raw_idea: required string. mode: optional quick|standard|deep. registry_snapshot: optional list of tools with tool_id, name, purpose, status, risk_level, approval_state, version. user_constraints: optional string.",
+  "output_schema_description": "decision, existing_capabilities, new_tool_needed, recommended_tool_name, risk_level, approval_required, approval_reasons, next_action, mission_outline, safety_notes, confidence."
+}
