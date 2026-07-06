@@ -27,6 +27,7 @@ test("built-in core tools appear without manual registration", async () => {
   assert.ok(ids.includes("idea_analyzer"));
   assert.ok(ids.includes("tool_mission_generator"));
   assert.ok(ids.includes("foundry_self_healer"));
+  assert.ok(ids.includes("foundry_operator"));
 });
 
 test("can execute built-in idea analyzer without manual registration", async () => {
@@ -111,4 +112,41 @@ test("can create a mission using generated mission fields", async () => {
 
   assert.equal(mission.status, 200);
   assert.ok(mission.body.mission_id);
+});
+
+
+test("can execute built-in foundry operator diagnosis", async () => {
+  process.env.GITHUB_OWNER = "Pyth-agoras";
+  process.env.GITHUB_REPO = "tool-foundry-backend";
+  process.env.GITHUB_BRANCH = "main";
+  process.env.GITHUB_TOKEN = "fake-token-for-readiness-test";
+  process.env.RENDER_DEPLOY_HOOK_URL = "https://example.com/deploy-hook";
+  process.env.PUBLIC_BASE_URL = "https://tool-foundry-backend.onrender.com";
+
+  const execution = await request(app)
+    .post("/tools/execute")
+    .set("x-api-key", "test-key")
+    .send({
+      tool_id: "foundry_operator",
+      input: {
+        mode: "diagnose",
+        check_scope: "core tools, GitHub token, Render deploy hook, public base URL, self-update readiness"
+      },
+      user_visible_purpose: "Test the Foundry Operator diagnosis."
+    });
+
+  assert.equal(execution.status, 200);
+  assert.equal(execution.body.tool_id, "foundry_operator");
+  assert.equal(execution.body.result.mode, "diagnose");
+  assert.ok(execution.body.result.diagnosis_before.core_tools_present.includes("foundry_operator"));
+});
+
+test("foundry repair endpoint works", async () => {
+  const res = await request(app)
+    .post("/foundry/repair")
+    .set("x-api-key", "test-key")
+    .send({});
+
+  assert.equal(res.status, 200);
+  assert.ok(res.body.results || res.body.actions_taken);
 });

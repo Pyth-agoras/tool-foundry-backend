@@ -42,6 +42,18 @@ const BUILTIN_TOOLS = [
     risk_level: "low",
     approval_state: "approved",
     builtin: true
+  },
+  {
+    tool_id: "foundry_operator",
+    name: "Foundry Operator",
+    purpose: "Automate Tool Foundry maintenance: diagnose setup, repair core tools, apply approved GitHub file updates, trigger Render redeploys, and verify backend readiness.",
+    status: "Approved",
+    version: "0.1.0",
+    input_schema_description: "Accepts mode, check_scope, files, commit_message, approval_confirmed, repair_mode, and optional raw_idea/context.",
+    output_schema_description: "Returns diagnosis, repairs, GitHub update results, Render deploy results, post-deploy checks, blockers, and next owner-level actions.",
+    risk_level: "medium",
+    approval_state: "approved",
+    builtin: true
   }
 ];
 
@@ -276,6 +288,277 @@ function runFoundrySelfHealer(input = {}) {
   };
 }
 
+
+function configuredEnv(keys) {
+  const result = {};
+  for (const key of keys) {
+    result[key] = Boolean(process.env[key] && String(process.env[key]).trim());
+  }
+  return result;
+}
+
+function diagnoseFoundryState() {
+  const state = readStore();
+  const allTools = getAllTools(state);
+  const availableIds = allTools.map((tool) => tool.tool_id);
+  const requiredBuiltinIds = BUILTIN_TOOLS.map((tool) => tool.tool_id);
+  const missingBuiltins = requiredBuiltinIds.filter((toolId) => !availableIds.includes(toolId));
+  const env = configuredEnv([
+    "API_KEY",
+    "GITHUB_TOKEN",
+    "GITHUB_OWNER",
+    "GITHUB_REPO",
+    "GITHUB_BRANCH",
+    "RENDER_DEPLOY_HOOK_URL",
+    "PUBLIC_BASE_URL"
+  ]);
+
+  const githubReady = Boolean(env.GITHUB_TOKEN && env.GITHUB_OWNER && env.GITHUB_REPO && env.GITHUB_BRANCH);
+  const renderReady = Boolean(env.RENDER_DEPLOY_HOOK_URL);
+  const publicCheckReady = Boolean(env.PUBLIC_BASE_URL);
+  const coreToolsReady = missingBuiltins.length === 0;
+
+  return {
+    status: githubReady && renderReady && coreToolsReady ? "ready_for_operator_use" : "needs_owner_setup_or_repair",
+    core_tools_ready: coreToolsReady,
+    core_tools_present: requiredBuiltinIds.filter((toolId) => availableIds.includes(toolId)),
+    missing_core_tools: missingBuiltins,
+    configured_values: env,
+    github_write_readiness: githubReady ? "configured" : "missing_required_values",
+    render_deploy_readiness: renderReady ? "configured" : "missing_RENDER_DEPLOY_HOOK_URL",
+    public_health_check_readiness: publicCheckReady ? "configured" : "missing_PUBLIC_BASE_URL",
+    self_update_readiness:
+      githubReady && renderReady
+        ? "configured_but_updates_still_require_explicit_approval_unless_AUTO_APPROVE_SAFE_UPDATES_true"
+        : "not_ready",
+    safety_gate:
+      process.env.AUTO_APPROVE_SAFE_UPDATES === "true"
+        ? "AUTO_APPROVE_SAFE_UPDATES is true; safe updates may proceed without additional approval."
+        : "Owner approval is required before backend self-updates.",
+    repo_target: {
+      owner_configured: process.env.GITHUB_OWNER || null,
+      repo_configured: process.env.GITHUB_REPO || null,
+      branch_configured: process.env.GITHUB_BRANCH || "main"
+    },
+    current_tools: allTools.map(normalizeTool),
+    counts: {
+      tools: allTools.length,
+      missions: state.missions.length,
+      evaluations: state.evaluations.length,
+      executions: state.executions.length,
+      events: state.events.length
+    }
+  };
+}
+
+function repairCoreTools() {
+  const state = readStore();
+  const seeded = seedBuiltinTools(state);
+  writeStore(state);
+  addEvent("foundry.operator_repair", { seeded_tools: seeded });
+  return {
+    repairs_performed: [`Seeded/refreshed built-in tools: ${seeded.join(", ")}.`],
+    diagnosis_after_repair: diagnoseFoundryState()
+  };
+}
+
+function validateUpgradeFile(file) {
+  if (!file || typeof file.path !== "string") return { ok: false, reason: "Each file must include a path." };
+  const rawPath = file.path.replace(/\\/g, "/").trim();
+  if (!rawPath || rawPath.startsWith("/") || rawPath.includes("..")) {
+    return { ok: false, reason: `Unsafe file path blocked: ${rawPath}` };
+  }
+  const blockedPrefixes = [".git/", "node_modules/", "data/", "tmp/"];
+  const blockedExact = [".env", "data/store.json", "package-lock.json"];
+  if (blockedExact.includes(rawPath) || blockedPrefixes.some((prefix) => rawPath.startsWith(prefix))) {
+    return { ok: false, reason: `Protected path blocked: ${rawPath}` };
+  }
+  if (typeof file.content !== "string") return { ok: false, reason: `File ${rawPath} must include string content.` };
+  return { ok: true, path: rawPath, content: file.content };
+}
+
+async function githubApi(path, options = {}) {
+  const token = process.env.GITHUB_TOKEN;
+  if (!token) throw new Error("GITHUB_TOKEN is not configured.");
+  const response = await fetch(`https://api.github.com${path}`, {
+    ...options,
+    headers: {
+      "Authorization": `Bearer ${token}`,
+      "Accept": "application/vnd.github+json",
+      "X-GitHub-Api-Version": "2022-11-28",
+      "User-Agent": "tool-foundry-backend",
+      ...(options.headers || {})
+    }
+  });
+  const text = await response.text();
+  let body = {};
+  try {
+    body = text ? JSON.parse(text) : {};
+  } catch {
+    body = { raw: text };
+  }
+  if (!response.ok) {
+    const message = body && body.message ? body.message : `GitHub API failed with status ${response.status}`;
+    throw new Error(message);
+  }
+  return body;
+}
+
+async function getExistingGithubFileSha(owner, repo, branch, filePath) {
+  try {
+    const body = await githubApi(`/repos/${owner}/${repo}/contents/${encodeURIComponent(filePath).replace(/%2F/g, "/")}?ref=${encodeURIComponent(branch)}`);
+    return body.sha || null;
+  } catch (err) {
+    if (String(err.message || "").toLowerCase().includes("not found")) return null;
+    throw err;
+  }
+}
+
+async function commitFilesToGithub(files, commitMessage) {
+  const owner = process.env.GITHUB_OWNER;
+  const repo = process.env.GITHUB_REPO;
+  const branch = process.env.GITHUB_BRANCH || "main";
+
+  if (!owner || !repo || !branch) {
+    throw new Error("GITHUB_OWNER, GITHUB_REPO, and GITHUB_BRANCH must be configured.");
+  }
+  if (repo !== "tool-foundry-backend") {
+    throw new Error("Safety block: GITHUB_REPO must be exactly tool-foundry-backend.");
+  }
+
+  const results = [];
+  for (const file of files) {
+    const valid = validateUpgradeFile(file);
+    if (!valid.ok) throw new Error(valid.reason);
+    const sha = await getExistingGithubFileSha(owner, repo, branch, valid.path);
+    const payload = {
+      message: commitMessage || `Tool Foundry automated update: ${valid.path}`,
+      content: Buffer.from(valid.content, "utf8").toString("base64"),
+      branch
+    };
+    if (sha) payload.sha = sha;
+
+    const result = await githubApi(`/repos/${owner}/${repo}/contents/${encodeURIComponent(valid.path).replace(/%2F/g, "/")}`, {
+      method: "PUT",
+      body: JSON.stringify(payload)
+    });
+    results.push({
+      path: valid.path,
+      commit_sha: result.commit && result.commit.sha,
+      html_url: result.content && result.content.html_url
+    });
+  }
+  addEvent("foundry.github_update", { files: results.map((item) => item.path), count: results.length });
+  return results;
+}
+
+async function triggerRenderDeploy() {
+  const hookUrl = process.env.RENDER_DEPLOY_HOOK_URL;
+  if (!hookUrl) throw new Error("RENDER_DEPLOY_HOOK_URL is not configured.");
+  const response = await fetch(hookUrl, { method: "POST" });
+  if (!response.ok) {
+    // Some Render deploy hooks accept GET even if POST is blocked by an intermediary.
+    const fallback = await fetch(hookUrl, { method: "GET" });
+    if (!fallback.ok) throw new Error(`Render deploy hook failed with status ${response.status}/${fallback.status}.`);
+  }
+  addEvent("foundry.render_deploy_triggered", {});
+  return { triggered: true, message: "Render deploy hook was called." };
+}
+
+async function checkPublicBackend() {
+  const base = process.env.PUBLIC_BASE_URL;
+  if (!base) return { skipped: true, reason: "PUBLIC_BASE_URL is not configured." };
+  const cleanBase = base.replace(/\/+$/, "");
+  const health = await fetch(`${cleanBase}/health`).then(async (res) => ({ status: res.status, ok: res.ok, body: await res.text() })).catch((err) => ({ ok: false, error: err.message }));
+  let tools = { skipped: true, reason: "tools/list requires API key through the backend itself; use Custom GPT listTools for authenticated check." };
+  try {
+    const response = await fetch(`${cleanBase}/tools/list`, { headers: { "x-api-key": getExpectedApiKey() } });
+    tools = { status: response.status, ok: response.ok, body: await response.text() };
+  } catch (err) {
+    tools = { ok: false, error: err.message };
+  }
+  return { health, tools };
+}
+
+async function runFoundryOperator(input = {}) {
+  const mode = String(input.mode || input.operation || "diagnose").toLowerCase();
+  const approvalConfirmed = Boolean(input.approval_confirmed || process.env.AUTO_APPROVE_SAFE_UPDATES === "true");
+  const report = {
+    mode,
+    started_at: nowIso(),
+    diagnosis_before: diagnoseFoundryState(),
+    actions_taken: [],
+    blockers: [],
+    results: {}
+  };
+
+  if (mode === "diagnose") {
+    report.results.diagnosis = report.diagnosis_before;
+    report.next_action = report.diagnosis_before.status === "ready_for_operator_use"
+      ? "The operator is ready. Use repair for registry repair, or upgrade/full_cycle for approved file updates."
+      : "Add missing owner-level environment variables in Render, then redeploy once.";
+    return report;
+  }
+
+  if (mode === "repair") {
+    report.results.repair = repairCoreTools();
+    report.actions_taken.push("Repaired/refreshed core built-in tool registrations.");
+    return report;
+  }
+
+  if (mode === "deploy") {
+    try {
+      report.results.render_deploy = await triggerRenderDeploy();
+      report.actions_taken.push("Triggered Render redeploy.");
+    } catch (err) {
+      report.blockers.push(err.message);
+    }
+    return report;
+  }
+
+  if (mode === "check" || mode === "verify") {
+    report.results.public_checks = await checkPublicBackend();
+    return report;
+  }
+
+  if (mode === "upgrade" || mode === "full_cycle") {
+    const files = Array.isArray(input.files) ? input.files : [];
+    if (!approvalConfirmed) {
+      report.blockers.push("Owner approval is required before applying backend file updates. Re-run with approval_confirmed: true after reviewing the update purpose.");
+      report.required_owner_action = "Approve this backend update before applying it.";
+      return report;
+    }
+    if (!files.length) {
+      report.blockers.push("No files were provided for the upgrade.");
+      report.expected_file_format = { files: [{ path: "src/server.js", content: "..." }] };
+      return report;
+    }
+    try {
+      report.results.github_update = await commitFilesToGithub(files, input.commit_message || "Tool Foundry automated backend update");
+      report.actions_taken.push("Committed approved file updates to GitHub.");
+    } catch (err) {
+      report.blockers.push(`GitHub update failed: ${err.message}`);
+      return report;
+    }
+    try {
+      report.results.render_deploy = await triggerRenderDeploy();
+      report.actions_taken.push("Triggered Render redeploy.");
+    } catch (err) {
+      report.blockers.push(`Render deploy failed: ${err.message}`);
+      return report;
+    }
+    if (mode === "full_cycle") {
+      report.results.public_checks = await checkPublicBackend();
+      report.actions_taken.push("Ran post-update public checks.");
+    }
+    return report;
+  }
+
+  report.blockers.push(`Unknown foundry_operator mode: ${mode}. Use diagnose, repair, deploy, check, upgrade, or full_cycle.`);
+  return report;
+}
+
+
 app.get("/health", (req, res) => {
   res.json({ ok: true, service: "tool-foundry-backend", version: "0.2.0-self-healing", time: nowIso() });
 });
@@ -439,6 +722,17 @@ app.post("/tools/execute", (req, res) => {
   } else if (tool_id === "foundry_self_healer") {
     result = runFoundrySelfHealer(input);
     summary = "Foundry Self-Healer completed.";
+  } else if (tool_id === "foundry_operator") {
+    runFoundryOperator(input).then((operatorResult) => {
+      const execution = { execution_id: id("exec"), tool_id, user_visible_purpose, input, result: operatorResult, warnings, created_at: nowIso() };
+      state.executions.push(execution);
+      writeStore(state);
+      addEvent("tool.executed", { tool_id, execution_id: execution.execution_id });
+      return res.json({ tool_id, result: operatorResult, summary: "Foundry Operator completed.", warnings });
+    }).catch((err) => {
+      return res.status(500).json({ error: "foundry_operator_failed", message: err.message });
+    });
+    return;
   } else {
     result = { message: "Tool is approved and registered, but this v0 backend does not yet have a custom executable handler for this tool.", received_input: input };
     summary = "Registered tool placeholder executed.";
@@ -451,6 +745,48 @@ app.post("/tools/execute", (req, res) => {
   addEvent("tool.executed", { tool_id, execution_id: execution.execution_id });
   res.json({ tool_id, result, summary, warnings });
 });
+
+
+app.post("/foundry/diagnose", async (req, res) => {
+  try {
+    res.json(await runFoundryOperator({ ...(req.body || {}), mode: "diagnose" }));
+  } catch (err) {
+    res.status(500).json({ error: "diagnose_failed", message: err.message });
+  }
+});
+
+app.post("/foundry/repair", async (req, res) => {
+  try {
+    res.json(await runFoundryOperator({ ...(req.body || {}), mode: "repair" }));
+  } catch (err) {
+    res.status(500).json({ error: "repair_failed", message: err.message });
+  }
+});
+
+app.post("/foundry/deploy", async (req, res) => {
+  try {
+    res.json(await runFoundryOperator({ ...(req.body || {}), mode: "deploy" }));
+  } catch (err) {
+    res.status(500).json({ error: "deploy_failed", message: err.message });
+  }
+});
+
+app.post("/foundry/upgrade", async (req, res) => {
+  try {
+    res.json(await runFoundryOperator({ ...(req.body || {}), mode: "upgrade" }));
+  } catch (err) {
+    res.status(500).json({ error: "upgrade_failed", message: err.message });
+  }
+});
+
+app.post("/foundry/full-cycle", async (req, res) => {
+  try {
+    res.json(await runFoundryOperator({ ...(req.body || {}), mode: "full_cycle" }));
+  } catch (err) {
+    res.status(500).json({ error: "full_cycle_failed", message: err.message });
+  }
+});
+
 
 module.exports = app;
 
