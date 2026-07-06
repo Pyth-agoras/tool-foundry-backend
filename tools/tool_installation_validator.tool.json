@@ -4,7 +4,7 @@
   "purpose": "Validate proposed Tool Foundry backend tool file payloads before foundry_operator installs them.",
   "status": "Testing",
   "risk_level": "low",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "approval_state": "pending_execution_test",
   "builtin": false,
   "input_schema_description": "proposed_tool_id; proposed_files_payload; source_inspection_summary; router_file_path; handler_file_path; expected_registry_metadata; expected_test_payload; install_goal; recent_failure_summary.",
