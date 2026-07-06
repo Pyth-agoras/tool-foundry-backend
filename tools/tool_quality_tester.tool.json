@@ -1,0 +1,12 @@
+{
+  "tool_id": "tool_quality_tester",
+  "name": "Tool Quality Tester",
+  "purpose": "Run structured quality tests against a newly installed Tool Foundry backend tool and decide whether it should be Approved, Needs Revision, or Rejected.",
+  "status": "Testing",
+  "risk_level": "low",
+  "version": "0.1.0",
+  "approval_state": "pending_execution_test",
+  "builtin": false,
+  "input_schema_description": "tool_id; tool_name; tool_purpose; expected_inputs; expected_outputs; test_cases; safety_boundaries; privacy_boundaries; cost_boundaries; execution_results; failure_conditions; user_goal.",
+  "output_schema_description": "quality_status; approval_recommendation; passed_tests; failed_tests; schema_match; usefulness_score; safety_status; privacy_status; cost_status; revision_needed; exact_revision_request; should_mark_approved; should_mark_needs_revision; should_reject; plain_english_summary."
+}
