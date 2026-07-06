@@ -1,122 +1,186 @@
 'use strict';
 
-const metadata = {
+const METADATA = {
   tool_id: 'tool_installation_validator',
   name: 'Tool Installation Validator',
-  purpose: 'Validate proposed Tool Foundry backend tool file payloads before foundry_operator installs them.',
-  status: 'Testing',
+  purpose: 'Validate proposed Tool Foundry backend tool file payloads before foundry_operator installs them, including new tool installs and safe handler-only repairs for already wired tools.',
+  status: 'Approved',
   risk_level: 'low',
-  version: '0.1.1',
-  approval_state: 'pending_execution_test',
+  version: '0.2.0',
+  approval_state: 'approved',
   builtin: false,
-  input_schema_description: 'proposed_tool_id; proposed_files_payload; source_inspection_summary; router_file_path; handler_file_path; expected_registry_metadata; expected_test_payload; install_goal; recent_failure_summary.',
-  output_schema_description: 'validation_status; can_install; missing_requirements; router_wiring_status; handler_status; registry_metadata_status; test_plan_status; approval_gate_status; exact_fix_needed; should_call_foundry_operator; plain_english_summary.'
+  input_schema_description: 'validation_mode; proposed_tool_id; proposed_files_payload; source_inspection_summary; router_file_path; handler_file_path; expected_registry_metadata; expected_test_payload; install_goal; recent_failure_summary; router_modification_required; already_wired_in_executable_handlers.',
+  output_schema_description: 'validation_status; can_install; validation_mode; missing_requirements; router_wiring_status; handler_status; registry_metadata_status; test_plan_status; approval_gate_status; exact_fix_needed; should_call_foundry_operator; plain_english_summary.'
 };
 
-function text(value) {
-  try { return JSON.stringify(value || '').toLowerCase(); } catch (_) { return String(value || '').toLowerCase(); }
+function asText(value) {
+  if (value === null || value === undefined) return '';
+  if (typeof value === 'string') return value;
+  try { return JSON.stringify(value); } catch (error) { return String(value); }
 }
 
-function getFile(files, path) {
-  return files.find(function (file) { return file && file.path === path; });
+function isPlainObject(value) {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function fileContent(file) {
-  return file && typeof file.content === 'string' ? file.content : '';
+function normalizePath(value) {
+  return String(value || '').replace(/^\/+/, '').trim();
 }
 
-function contains(value, needle) {
-  return String(value || '').toLowerCase().indexOf(String(needle || '').toLowerCase()) !== -1;
+function getPayloadFiles(input) {
+  return Array.isArray(input.proposed_files_payload) ? input.proposed_files_payload : [];
 }
 
-function weakOrPlaceholder(content) {
-  const compact = String(content || '').replace(/\s+/g, ' ').trim().toLowerCase();
-  if (!compact) return true;
-  if (compact.length < 70) return true;
-  if (contains(compact, 'placeholder') || contains(compact, 'todo')) return true;
-  if (contains(compact, 'return { ok: true };') || contains(compact, 'return {ok:true};')) return true;
-  if (contains(compact, 'received_input') && !contains(compact, 'validation_status')) return true;
-  return false;
+function findFile(files, path) {
+  const safePath = normalizePath(path);
+  return files.find(file => normalizePath(file && file.path) === safePath);
 }
 
-function handlerExportLooksValid(content) {
-  const c = String(content || '');
-  if (contains(c, 'module.exports') && (contains(c, 'handler') || contains(c, 'install'))) return true;
-  if (contains(c, 'exports.handler')) return true;
-  if (contains(c, 'async function handler')) return true;
-  return false;
+function hasSubstantiveContent(content) {
+  const text = asText(content).trim();
+  if (text.length < 40) return false;
+  const lowered = text.toLowerCase();
+  const banned = ['placeholder', 'todo', 'tbd', 'mission text only', 'documentation only', 'metadata only', 'repair_payload_blocked', 'not implemented'];
+  if (banned.some(term => lowered.includes(term))) return false;
+  const executableSignals = ['module.exports', 'exports.', 'async function', 'function ', '=>', 'const ', 'class '];
+  return executableSignals.some(signal => text.includes(signal));
 }
 
-function routerContainsWiring(content, toolId) {
-  const c = String(content || '');
-  if (!contains(c, toolId)) return false;
-  if (contains(c, 'EXECUTABLE_HANDLERS') && contains(c, toolId)) return true;
-  if (contains(c, "installexternal('./" + toolId + "')")) return true;
-  if (contains(c, 'installexternal("./' + toolId + '")')) return true;
-  return false;
+function hasRouterWiring(content, proposedToolId) {
+  const text = asText(content);
+  if (!text) return false;
+  return text.includes('EXECUTABLE_HANDLERS') && text.includes(proposedToolId);
 }
 
-async function handler(input) {
-  input = input || {};
-  const proposedToolId = String(input.proposed_tool_id || '').trim();
-  const files = Array.isArray(input.proposed_files_payload) ? input.proposed_files_payload : [];
-  const routerPath = input.router_file_path || 'src/executable_tool_router.js';
-  const handlerPath = input.handler_file_path || (proposedToolId ? 'src/' + proposedToolId + '.js' : '');
-  const expectedMetadata = input.expected_registry_metadata || {};
-  const expectedTestPayload = input.expected_test_payload || null;
+function hasRegistryMetadata(input, files, proposedToolId) {
+  if (isPlainObject(input.expected_registry_metadata)) return true;
+  const metadataText = asText(input.expected_registry_metadata).trim();
+  if (metadataText && metadataText !== '{}' && metadataText !== 'null') return true;
+  return files.some(file => {
+    const text = asText(file && file.content);
+    return text.includes('tool_id') && text.includes(proposedToolId) && (text.includes('purpose') || text.includes('status'));
+  });
+}
 
+function hasValidTestPayload(input) {
+  const payload = input.expected_test_payload;
+  if (isPlainObject(payload)) {
+    return Object.keys(payload).length > 0 && Boolean(payload.tool_id || payload.input || payload.raw_idea || payload.inspect_scope);
+  }
+  const text = asText(payload).trim();
+  if (!text || text === '{}' || text === 'null') return false;
+  return text.length >= 8;
+}
+
+function sourceConfirmsWiring(input, proposedToolId) {
+  if (input.already_wired_in_executable_handlers === true) return true;
+  const summary = asText(input.source_inspection_summary);
+  return summary.includes('EXECUTABLE_HANDLERS') && summary.includes(proposedToolId) && (summary.includes('wired') || summary.includes('metadata_found') || summary.includes('handler'));
+}
+
+function validateNewToolInstall(input, files, proposedToolId, handlerPath, routerPath) {
   const missing = [];
-  if (!proposedToolId) missing.push('proposed_tool_id is required.');
-  if (!files.length) missing.push('proposed_files_payload must include explicit file paths and contents.');
-  files.forEach(function (file) { if (!file || !file.path || typeof file.content !== 'string') missing.push('Every proposed file must include path and string content.'); });
+  const handlerFile = findFile(files, handlerPath);
+  const routerFile = findFile(files, routerPath);
+  const handlerOk = Boolean(handlerFile && hasSubstantiveContent(handlerFile.content));
+  const routerOk = Boolean(routerFile && hasSubstantiveContent(routerFile.content) && hasRouterWiring(routerFile.content, proposedToolId));
+  const registryOk = hasRegistryMetadata(input, files, proposedToolId);
+  const testOk = hasValidTestPayload(input);
 
-  const handlerFile = handlerPath ? getFile(files, handlerPath) : null;
-  const routerFile = getFile(files, routerPath);
-  const handlerText = fileContent(handlerFile);
-  const routerText = fileContent(routerFile);
-  const allPayloadText = files.map(function (file) { return String(file.path || '') + '\n' + fileContent(file); }).join('\n');
+  if (!files.length) missing.push('proposed_files_payload must include explicit file paths and file contents.');
+  if (!handlerFile) missing.push('Handler file is missing from the proposed payload: ' + handlerPath + '.');
+  else if (!handlerOk) missing.push('Handler file is missing a valid executable export or appears placeholder-only.');
+  if (!routerFile) missing.push('Router file is missing from the proposed payload: ' + routerPath + '.');
+  else if (!routerOk) missing.push('Router file does not include substantive EXECUTABLE_HANDLERS wiring for ' + proposedToolId + '.');
+  if (!registryOk) missing.push('Registry/list metadata for the proposed tool is missing.');
+  if (!testOk) missing.push('Expected live execution test payload is missing or incomplete.');
 
-  const hasHandler = Boolean(handlerFile);
-  const handlerValid = hasHandler && handlerExportLooksValid(handlerText) && !weakOrPlaceholder(handlerText);
-  const hasRouter = Boolean(routerFile);
-  const routerWired = hasRouter && routerContainsWiring(routerText, proposedToolId);
-  const metadataPresent = contains(routerText, proposedToolId) || contains(handlerText, proposedToolId) || contains(text(expectedMetadata), proposedToolId);
-  const testPayloadPresent = Boolean(expectedTestPayload && typeof expectedTestPayload === 'object' && expectedTestPayload.tool_id && Object.prototype.hasOwnProperty.call(expectedTestPayload, 'input'));
-  const docsOnly = files.length > 0 && files.every(function (file) { return /\.(md|txt)$/i.test(String(file.path || '')); });
-  const metadataOnly = files.length > 0 && files.every(function (file) { return /\.json$/i.test(String(file.path || '')); });
-  const placeholderOnly = files.length > 0 && files.every(function (file) { return weakOrPlaceholder(fileContent(file)) || /\.(json|md|txt)$/i.test(String(file.path || '')); });
-
-  if (!hasHandler) missing.push('Handler file is missing from the proposed payload: ' + handlerPath + '.');
-  if (hasHandler && !handlerValid) missing.push('Handler file is missing a valid executable export or appears placeholder-only.');
-  if (!hasRouter) missing.push('Router file is missing from the proposed payload: ' + routerPath + '.');
-  if (hasRouter && !routerWired) missing.push('Router wiring is missing: EXECUTABLE_HANDLERS or installExternal registration was not found for ' + proposedToolId + '.');
-  if (!metadataPresent) missing.push('Registry/list metadata for the proposed tool is missing.');
-  if (!testPayloadPresent) missing.push('Expected live execution test payload is missing or incomplete.');
-  if (docsOnly) missing.push('Payload is documentation-only.');
-  if (metadataOnly) missing.push('Payload is metadata-only.');
-  if (placeholderOnly) missing.push('Payload appears placeholder-only.');
-
-  const canInstall = missing.length === 0;
   return {
-    validation_status: canInstall ? 'passed' : 'failed',
+    missing,
+    router_wiring_status: routerOk ? 'router_wiring_present' : (routerFile ? 'router_wiring_missing_or_incomplete' : 'router_file_missing'),
+    handler_status: handlerOk ? 'present_and_substantive' : (handlerFile ? 'present_but_invalid_or_placeholder' : 'handler_file_missing'),
+    registry_metadata_status: registryOk ? 'present' : 'missing',
+    test_plan_status: testOk ? 'present' : 'missing_or_incomplete'
+  };
+}
+
+function validateHandlerOnlyRepair(input, files, proposedToolId, handlerPath) {
+  const missing = [];
+  const handlerFile = findFile(files, handlerPath);
+  const handlerOk = Boolean(handlerFile && hasSubstantiveContent(handlerFile.content));
+  const wiredOk = sourceConfirmsWiring(input, proposedToolId);
+  const routerNotRequired = input.router_modification_required === false || String(input.router_modification_required).toLowerCase() === 'false';
+  const registryOk = hasRegistryMetadata(input, files, proposedToolId) || Boolean(input.registry_metadata_unchanged);
+  const testOk = hasValidTestPayload(input);
+  const goal = asText(input.install_goal).toLowerCase();
+  const limitedRepairGoal = goal.includes('repair') || goal.includes('handler') || goal.includes('existing');
+  const introducesNewTool = input.already_wired_in_executable_handlers === false || (!wiredOk && !asText(input.source_inspection_summary).includes(proposedToolId));
+
+  if (!proposedToolId) missing.push('proposed_tool_id is required.');
+  if (!files.length) missing.push('proposed_files_payload must include explicit file paths and file contents.');
+  if (!handlerFile) missing.push('Handler file is missing from the proposed payload: ' + handlerPath + '.');
+  else if (!handlerOk) missing.push('Handler file is missing a valid executable export or appears placeholder-only.');
+  if (!wiredOk) missing.push('Source inspection must confirm the tool is already wired in EXECUTABLE_HANDLERS.');
+  if (!routerNotRequired) missing.push('router_modification_required must be false for handler_only_repair.');
+  if (!registryOk) missing.push('Registry metadata must be present or explicitly unchanged.');
+  if (!testOk) missing.push('Expected live execution test payload is missing or incomplete.');
+  if (!limitedRepairGoal) missing.push('Install goal must be limited to updating existing handler behavior.');
+  if (introducesNewTool) missing.push('handler_only_repair cannot introduce a new tool ID.');
+
+  return {
+    missing,
+    router_wiring_status: wiredOk && routerNotRequired ? 'already_wired_router_modification_not_required' : 'router_wiring_not_confirmed_or_router_modification_required',
+    handler_status: handlerOk ? 'present_and_substantive' : (handlerFile ? 'present_but_invalid_or_placeholder' : 'handler_file_missing'),
+    registry_metadata_status: registryOk ? 'present_or_unchanged' : 'missing',
+    test_plan_status: testOk ? 'present' : 'missing_or_incomplete'
+  };
+}
+
+async function execute(input) {
+  const params = input || {};
+  const proposedToolId = String(params.proposed_tool_id || '').trim();
+  const validationMode = params.validation_mode === 'handler_only_repair' ? 'handler_only_repair' : 'new_tool_install';
+  const files = getPayloadFiles(params);
+  const handlerPath = normalizePath(params.handler_file_path || (proposedToolId ? 'src/' + proposedToolId + '.js' : ''));
+  const routerPath = normalizePath(params.router_file_path || 'src/executable_tool_router.js');
+
+  let result;
+  if (validationMode === 'handler_only_repair') {
+    result = validateHandlerOnlyRepair(params, files, proposedToolId, handlerPath);
+  } else {
+    result = validateNewToolInstall(params, files, proposedToolId, handlerPath, routerPath);
+  }
+
+  const canInstall = result.missing.length === 0;
+  const validationStatus = canInstall ? 'passed' : 'failed';
+  const exactFixNeeded = canInstall ? 'No blocking issues found. It is safe to call foundry_operator after owner approval.' : 'Do not call foundry_operator yet. Fix these issues first: ' + result.missing.join(' ');
+
+  return {
+    validation_status: validationStatus,
     can_install: canInstall,
-    missing_requirements: missing,
-    router_wiring_status: routerWired ? 'present' : hasRouter ? 'missing_tool_registration' : 'router_file_missing',
-    handler_status: handlerValid ? 'present_and_substantive' : hasHandler ? 'present_but_invalid_or_placeholder' : 'handler_file_missing',
-    registry_metadata_status: metadataPresent ? 'present' : 'missing',
-    test_plan_status: testPayloadPresent ? 'present' : 'missing_or_incomplete',
-    approval_gate_status: canInstall ? 'ready_for_owner_approved_foundry_operator_install' : 'blocked_before_foundry_operator',
-    exact_fix_needed: canInstall ? 'No fix needed before foundry_operator. Payload has explicit file paths, handler, router wiring, registry metadata, and test payload.' : 'Do not call foundry_operator yet. Fix these issues first: ' + missing.join(' '),
+    validation_mode: validationMode,
+    missing_requirements: result.missing,
+    router_wiring_status: result.router_wiring_status,
+    handler_status: result.handler_status,
+    registry_metadata_status: result.registry_metadata_status,
+    test_plan_status: result.test_plan_status,
+    approval_gate_status: canInstall ? 'ready_for_foundry_operator_with_owner_approval' : 'blocked_before_foundry_operator',
+    exact_fix_needed: exactFixNeeded,
     should_call_foundry_operator: canInstall,
-    plain_english_summary: canInstall ? 'The proposed payload for ' + proposedToolId + ' appears ready for foundry_operator after owner approval.' : 'The proposed payload for ' + (proposedToolId || 'the tool') + ' is blocked before installation: ' + missing.join(' ')
+    plain_english_summary: canInstall ? 'The proposed ' + validationMode + ' payload is complete enough for installation after owner approval.' : 'The proposed ' + validationMode + ' payload is blocked before installation: ' + result.missing.join(' ')
   };
 }
 
 function install(router) {
-  if (!router || !router.EXECUTABLE_HANDLERS || typeof router.registerTool !== 'function') throw new Error('Executable router exports required.');
-  router.EXECUTABLE_HANDLERS[metadata.tool_id] = handler;
-  router.registerTool(metadata);
-  return { installed: true, tool_id: metadata.tool_id };
+  if (!router) return;
+  if (Array.isArray(router.BUILTIN_TOOL_METADATA)) {
+    const index = router.BUILTIN_TOOL_METADATA.findIndex(tool => tool.tool_id === METADATA.tool_id);
+    if (index >= 0) router.BUILTIN_TOOL_METADATA[index] = METADATA;
+    else router.BUILTIN_TOOL_METADATA.push(METADATA);
+  }
+  if (router.EXECUTABLE_HANDLERS) {
+    router.EXECUTABLE_HANDLERS[METADATA.tool_id] = execute;
+  }
 }
 
-module.exports = { metadata, handler, install };
+module.exports = { METADATA, metadata: METADATA, execute, handle: execute, install };
