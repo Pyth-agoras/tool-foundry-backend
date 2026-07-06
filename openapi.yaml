@@ -1,23 +1,204 @@
 openapi: 3.1.0
+
 info:
   title: Tool Foundry API
-  version: 0.1.0
-  description: API bridge between a Custom GPT and an external Tool Foundry backend.
+  version: 0.2.0
+  description: >
+    API bridge between a Custom GPT and an external Tool Foundry backend.
+    This version includes built-in core tools and a Foundry Self-Healer so
+    starter tools survive redeploys and common setup problems can be diagnosed.
+
 servers:
   - url: https://tool-foundry-backend.onrender.com
+    description: Render-hosted Tool Foundry backend
+
 components:
   securitySchemes:
     ApiKeyAuth:
       type: apiKey
       in: header
       name: x-api-key
+
+  schemas:
+    Tool:
+      type: object
+      properties:
+        tool_id:
+          type: string
+        name:
+          type: string
+        purpose:
+          type: string
+        status:
+          type: string
+          enum:
+            - Draft
+            - Building
+            - Testing
+            - Needs Revision
+            - Pending Approval
+            - Approved
+            - Deprecated
+        risk_level:
+          type: string
+        version:
+          type: string
+        approval_state:
+          type: string
+        builtin:
+          type: boolean
+
+    ToolMission:
+      type: object
+      required:
+        - tool_name
+        - purpose
+        - capability_needed
+        - success_criteria
+      properties:
+        tool_name:
+          type: string
+          description: Short machine-readable name for the tool mission.
+        purpose:
+          type: string
+          description: User-facing purpose of the tool.
+        capability_needed:
+          type: string
+          description: The missing capability this tool should provide.
+        input_schema_description:
+          type: string
+          description: Plain-English description of the input the tool should accept.
+        output_schema_description:
+          type: string
+          description: Plain-English description of the output the tool should return.
+        success_criteria:
+          type: array
+          items:
+            type: string
+        failure_conditions:
+          type: array
+          items:
+            type: string
+        safety_boundaries:
+          type: array
+          items:
+            type: string
+        privacy_boundaries:
+          type: array
+          items:
+            type: string
+        cost_boundaries:
+          type: array
+          items:
+            type: string
+        test_cases:
+          type: array
+          items:
+            type: string
+        approval_required:
+          type: boolean
+        codex_implementation_notes:
+          type: string
+
+    ToolRegistration:
+      type: object
+      required:
+        - tool_id
+        - name
+        - purpose
+        - status
+      properties:
+        tool_id:
+          type: string
+        name:
+          type: string
+        purpose:
+          type: string
+        status:
+          type: string
+          enum:
+            - Draft
+            - Building
+            - Testing
+            - Needs Revision
+            - Pending Approval
+            - Approved
+            - Deprecated
+        version:
+          type: string
+        input_schema_description:
+          type: string
+        output_schema_description:
+          type: string
+        risk_level:
+          type: string
+        approval_state:
+          type: string
+
+    ToolExecutionRequest:
+      type: object
+      required:
+        - tool_id
+        - input
+      properties:
+        tool_id:
+          type: string
+          description: The ID of the approved or built-in tool to execute.
+        input:
+          type: object
+          description: Structured input to pass into the selected tool.
+          properties:
+            raw_idea:
+              type: string
+              description: Raw user idea, request, or text to analyze.
+            idea:
+              type: string
+            text:
+              type: string
+            analysis_result:
+              type: object
+              additionalProperties: true
+            desired_tool_type:
+              type: string
+              description: Desired class/type of generated tool.
+            risk_level:
+              type: string
+              enum:
+                - low
+                - medium
+                - high
+            user_constraints:
+              type: string
+            depth:
+              type: string
+              enum:
+                - quick
+                - standard
+                - deep
+            mode:
+              type: string
+            context:
+              type: string
+            repair_mode:
+              type: boolean
+              description: For foundry_self_healer, true means repair/seed core tools where possible.
+            check_scope:
+              type: string
+              description: Optional scope for a diagnostic check.
+          additionalProperties: true
+        user_visible_purpose:
+          type: string
+          description: Plain-English reason the Custom GPT is using this tool.
+
 security:
   - ApiKeyAuth: []
+
 paths:
   /health:
     get:
       operationId: healthCheck
       summary: Check whether the Tool Foundry backend is online.
+      description: Public health check. Does not require authentication.
       security: []
       responses:
         "200":
@@ -35,10 +216,12 @@ paths:
                     type: string
                   time:
                     type: string
+
   /tools/list:
     get:
       operationId: listTools
-      summary: List registered tools available to the Custom GPT.
+      summary: List registered and built-in tools available to the Custom GPT.
+      description: Returns all tools currently available, including built-in core tools that survive redeploys.
       responses:
         "200":
           description: List of tools.
@@ -50,70 +233,21 @@ paths:
                   tools:
                     type: array
                     items:
-                      type: object
-                      properties:
-                        tool_id:
-                          type: string
-                        name:
-                          type: string
-                        purpose:
-                          type: string
-                        status:
-                          type: string
-                        risk_level:
-                          type: string
-                        version:
-                          type: string
-                        approval_state:
-                          type: string
+                      $ref: "#/components/schemas/Tool"
+        "401":
+          description: Missing or invalid API key.
+
   /tools/mission/create:
     post:
       operationId: createToolMission
       summary: Create a new tool-building mission.
+      description: Creates a mission describing a new tool that Codex or the backend should build.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [tool_name, purpose, capability_needed, success_criteria]
-              properties:
-                tool_name:
-                  type: string
-                purpose:
-                  type: string
-                capability_needed:
-                  type: string
-                input_schema_description:
-                  type: string
-                output_schema_description:
-                  type: string
-                success_criteria:
-                  type: array
-                  items:
-                    type: string
-                failure_conditions:
-                  type: array
-                  items:
-                    type: string
-                safety_boundaries:
-                  type: array
-                  items:
-                    type: string
-                privacy_boundaries:
-                  type: array
-                  items:
-                    type: string
-                cost_boundaries:
-                  type: array
-                  items:
-                    type: string
-                test_cases:
-                  type: array
-                  items:
-                    type: string
-                approval_required:
-                  type: boolean
+              $ref: "#/components/schemas/ToolMission"
       responses:
         "200":
           description: Tool mission created.
@@ -128,6 +262,9 @@ paths:
                     type: string
                   message:
                     type: string
+        "401":
+          description: Missing or invalid API key.
+
   /tools/mission/status:
     get:
       operationId: getToolMissionStatus
@@ -138,6 +275,7 @@ paths:
           required: true
           schema:
             type: string
+          description: The mission ID returned by createToolMission.
       responses:
         "200":
           description: Mission status.
@@ -157,6 +295,11 @@ paths:
                   mission:
                     type: object
                     additionalProperties: true
+        "401":
+          description: Missing or invalid API key.
+        "404":
+          description: Mission not found.
+
   /tools/mission/revision:
     post:
       operationId: sendToolMissionRevision
@@ -167,7 +310,9 @@ paths:
           application/json:
             schema:
               type: object
-              required: [mission_id, revision_request]
+              required:
+                - mission_id
+                - revision_request
               properties:
                 mission_id:
                   type: string
@@ -189,37 +334,22 @@ paths:
                     type: string
                   message:
                     type: string
+        "401":
+          description: Missing or invalid API key.
+        "404":
+          description: Mission not found.
+
   /tools/register:
     post:
       operationId: registerTool
       summary: Register a completed tool for future use by the Custom GPT.
+      description: Stores or updates a tool record in the Tool Foundry registry.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [tool_id, name, purpose, status]
-              properties:
-                tool_id:
-                  type: string
-                name:
-                  type: string
-                purpose:
-                  type: string
-                status:
-                  type: string
-                  enum: [Draft, Building, Testing, Needs Revision, Pending Approval, Approved, Deprecated]
-                version:
-                  type: string
-                input_schema_description:
-                  type: string
-                output_schema_description:
-                  type: string
-                risk_level:
-                  type: string
-                approval_state:
-                  type: string
+              $ref: "#/components/schemas/ToolRegistration"
       responses:
         "200":
           description: Tool registered.
@@ -234,17 +364,21 @@ paths:
                     type: string
                   message:
                     type: string
+        "401":
+          description: Missing or invalid API key.
+
   /tools/evaluate:
     post:
       operationId: evaluateTool
-      summary: Evaluate a registered or draft tool against a mission.
+      summary: Evaluate a registered, draft, or built-in tool against a mission.
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [tool_id]
+              required:
+                - tool_id
               properties:
                 tool_id:
                   type: string
@@ -252,7 +386,10 @@ paths:
                   type: string
                 evaluation_depth:
                   type: string
-                  enum: [quick, standard, strict]
+                  enum:
+                    - quick
+                    - standard
+                    - strict
       responses:
         "200":
           description: Tool evaluation result.
@@ -271,25 +408,22 @@ paths:
                     type: string
                   approval_recommendation:
                     type: string
+        "401":
+          description: Missing or invalid API key.
+        "404":
+          description: Tool not found.
+
   /tools/execute:
     post:
       operationId: executeTool
-      summary: Execute an approved tool.
+      summary: Execute an approved or built-in tool.
+      description: Runs an approved registered tool or built-in system tool and returns the result to the Custom GPT.
       requestBody:
         required: true
         content:
           application/json:
             schema:
-              type: object
-              required: [tool_id, input]
-              properties:
-                tool_id:
-                  type: string
-                input:
-                  type: object
-                  additionalProperties: true
-                user_visible_purpose:
-                  type: string
+              $ref: "#/components/schemas/ToolExecutionRequest"
       responses:
         "200":
           description: Tool execution result.
@@ -309,3 +443,9 @@ paths:
                     type: array
                     items:
                       type: string
+        "401":
+          description: Missing or invalid API key.
+        "403":
+          description: Tool is not approved for execution.
+        "404":
+          description: Tool not found.

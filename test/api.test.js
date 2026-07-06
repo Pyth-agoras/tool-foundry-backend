@@ -20,55 +20,23 @@ test("protected endpoint rejects missing API key", async () => {
   assert.equal(res.status, 401);
 });
 
-test("can create mission, register idea analyzer, evaluate, and execute", async () => {
-  const mission = await request(app)
-    .post("/tools/mission/create")
-    .set("x-api-key", "test-key")
-    .send({
-      tool_name: "Idea Analyzer",
-      purpose: "Analyze raw user ideas.",
-      capability_needed: "Return core goal, intelligence pattern, risk level, and next action.",
-      success_criteria: ["Returns structured output"],
-      approval_required: false
-    });
+test("built-in core tools appear without manual registration", async () => {
+  const res = await request(app).get("/tools/list").set("x-api-key", "test-key");
+  assert.equal(res.status, 200);
+  const ids = res.body.tools.map((tool) => tool.tool_id);
+  assert.ok(ids.includes("idea_analyzer"));
+  assert.ok(ids.includes("tool_mission_generator"));
+  assert.ok(ids.includes("foundry_self_healer"));
+});
 
-  assert.equal(mission.status, 200);
-  assert.ok(mission.body.mission_id);
-
-  const register = await request(app)
-    .post("/tools/register")
-    .set("x-api-key", "test-key")
-    .send({
-      tool_id: "idea_analyzer",
-      name: "Idea Analyzer",
-      purpose: "Analyze raw user ideas into structured next steps.",
-      status: "Approved",
-      version: "0.1.0",
-      risk_level: "low",
-      approval_state: "approved"
-    });
-
-  assert.equal(register.status, 200);
-
-  const evaluation = await request(app)
-    .post("/tools/evaluate")
-    .set("x-api-key", "test-key")
-    .send({
-      tool_id: "idea_analyzer",
-      mission_id: mission.body.mission_id,
-      evaluation_depth: "quick"
-    });
-
-  assert.equal(evaluation.status, 200);
-  assert.equal(evaluation.body.passed, true);
-
+test("can execute built-in idea analyzer without manual registration", async () => {
   const execution = await request(app)
     .post("/tools/execute")
     .set("x-api-key", "test-key")
     .send({
       tool_id: "idea_analyzer",
       input: { raw_idea: "I want an AI that builds tools for itself." },
-      user_visible_purpose: "Test the starter idea analyzer."
+      user_visible_purpose: "Test the built-in idea analyzer."
     });
 
   assert.equal(execution.status, 200);
@@ -76,23 +44,7 @@ test("can create mission, register idea analyzer, evaluate, and execute", async 
   assert.ok(execution.body.result.core_goal);
 });
 
-
-test("can register and execute tool mission generator", async () => {
-  const register = await request(app)
-    .post("/tools/register")
-    .set("x-api-key", "test-key")
-    .send({
-      tool_id: "tool_mission_generator",
-      name: "Tool Mission Generator",
-      purpose: "Convert a raw idea or analyzed idea into a complete Codex-ready Tool Mission.",
-      status: "Approved",
-      version: "0.1.0",
-      risk_level: "low",
-      approval_state: "approved"
-    });
-
-  assert.equal(register.status, 200);
-
+test("can execute built-in tool mission generator without manual registration", async () => {
   const execution = await request(app)
     .post("/tools/execute")
     .set("x-api-key", "test-key")
@@ -113,4 +65,50 @@ test("can register and execute tool mission generator", async () => {
   assert.ok(execution.body.result.complete_tool_mission.tool_name);
   assert.ok(execution.body.result.complete_tool_mission.success_criteria.length);
   assert.ok(execution.body.result.complete_tool_mission.codex_implementation_notes);
+});
+
+test("can execute foundry self-healer and seed core tools", async () => {
+  const execution = await request(app)
+    .post("/tools/execute")
+    .set("x-api-key", "test-key")
+    .send({
+      tool_id: "foundry_self_healer",
+      input: {
+        repair_mode: true,
+        check_scope: "core tools, action schema, registry"
+      },
+      user_visible_purpose: "Repair and diagnose Tool Foundry setup."
+    });
+
+  assert.equal(execution.status, 200);
+  assert.equal(execution.body.tool_id, "foundry_self_healer");
+  assert.equal(execution.body.result.foundry_status, "healthy_core_tools_available");
+  assert.ok(execution.body.result.core_tools_available.includes("idea_analyzer"));
+  assert.ok(execution.body.result.core_tools_available.includes("tool_mission_generator"));
+  assert.ok(execution.body.result.core_tools_available.includes("foundry_self_healer"));
+});
+
+test("can create a mission using generated mission fields", async () => {
+  const generated = await request(app)
+    .post("/tools/execute")
+    .set("x-api-key", "test-key")
+    .send({
+      tool_id: "tool_mission_generator",
+      input: {
+        raw_idea: "I want a setup repair tool.",
+        desired_tool_type: "foundry maintenance tool",
+        risk_level: "low",
+        user_constraints: "Keep it non-technical."
+      },
+      user_visible_purpose: "Generate a mission."
+    });
+
+  const missionBody = generated.body.result.complete_tool_mission;
+  const mission = await request(app)
+    .post("/tools/mission/create")
+    .set("x-api-key", "test-key")
+    .send(missionBody);
+
+  assert.equal(mission.status, 200);
+  assert.ok(mission.body.mission_id);
 });

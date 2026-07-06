@@ -67,3 +67,72 @@ This backend includes two starter executable handlers:
 - `tool_mission_generator`: converts a raw idea or analysis result into a complete Codex-ready Tool Mission object.
 
 Register each tool as `Approved` before executing it from the Custom GPT.
+
+
+## Version 0.2.0 — Self-Healing Core Tools
+
+This version adds three built-in core tools that appear automatically in `/tools/list` after every deploy:
+
+- `idea_analyzer`
+- `tool_mission_generator`
+- `foundry_self_healer`
+
+Why this matters:
+
+The first v0 backend stored tools in local runtime storage. After a Render redeploy, the registry could appear empty, which forced manual re-registration. The new version makes the core starter tools built into the backend code so the user does not repeat that setup loop.
+
+### Built-in tools
+
+#### idea_analyzer
+
+Analyzes a raw idea.
+
+Call through `executeTool` with:
+
+```json
+{
+  "tool_id": "idea_analyzer",
+  "input": {
+    "raw_idea": "I want an AI that builds tools for itself."
+  },
+  "user_visible_purpose": "Analyze the user's raw idea."
+}
+```
+
+#### tool_mission_generator
+
+Turns a raw idea into a Codex-ready tool mission.
+
+```json
+{
+  "tool_id": "tool_mission_generator",
+  "input": {
+    "raw_idea": "I want a setup repair tool.",
+    "desired_tool_type": "foundry maintenance tool",
+    "risk_level": "low",
+    "user_constraints": "The user is non-technical. Do not ask coding questions."
+  },
+  "user_visible_purpose": "Generate a Codex-ready tool mission."
+}
+```
+
+#### foundry_self_healer
+
+Diagnoses and repairs common Tool Foundry setup issues.
+
+```json
+{
+  "tool_id": "foundry_self_healer",
+  "input": {
+    "repair_mode": true,
+    "check_scope": "core tools, action schema, registry, redeploy readiness"
+  },
+  "user_visible_purpose": "Check and repair Tool Foundry setup issues."
+}
+```
+
+### Important limitation
+
+Core tools now survive redeploys because they are built into code.
+
+Custom generated tools, missions, evaluations, and execution logs still need a persistent database upgrade if they must survive all redeploys and instance resets.

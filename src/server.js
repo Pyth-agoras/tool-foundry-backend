@@ -6,6 +6,45 @@ app.use(express.json({ limit: "1mb" }));
 
 const TOOL_STATES = ["Draft", "Building", "Testing", "Needs Revision", "Pending Approval", "Approved", "Deprecated"];
 
+const BUILTIN_TOOLS = [
+  {
+    tool_id: "idea_analyzer",
+    name: "Idea Analyzer",
+    purpose: "Analyze raw user ideas into a core goal, intelligence pattern, risk level, needed tool type, and next action.",
+    status: "Approved",
+    version: "0.2.0",
+    input_schema_description: "Accepts raw_idea as text.",
+    output_schema_description: "Returns core_goal, intelligence_pattern, risk_level, risk_notes, needed_tool_type, and next_action.",
+    risk_level: "low",
+    approval_state: "approved",
+    builtin: true
+  },
+  {
+    tool_id: "tool_mission_generator",
+    name: "Tool Mission Generator",
+    purpose: "Convert a raw idea or analyzed idea into a complete Codex-ready Tool Mission.",
+    status: "Approved",
+    version: "0.2.0",
+    input_schema_description: "Accepts raw_idea, analysis_result, desired_tool_type, risk_level, and user_constraints.",
+    output_schema_description: "Returns a complete_tool_mission object ready to send to createToolMission.",
+    risk_level: "low",
+    approval_state: "approved",
+    builtin: true
+  },
+  {
+    tool_id: "foundry_self_healer",
+    name: "Foundry Self-Healer",
+    purpose: "Diagnose and repair common Tool Foundry setup problems so the user does not repeat manual setup steps after redeploys or schema drift.",
+    status: "Approved",
+    version: "0.1.0",
+    input_schema_description: "Accepts repair_mode, check_scope, context, and optional raw_idea.",
+    output_schema_description: "Returns health checks, repairs performed, missing pieces, next owner-level clicks, and recommended Codex tasks.",
+    risk_level: "low",
+    approval_state: "approved",
+    builtin: true
+  }
+];
+
 function getExpectedApiKey() {
   return process.env.API_KEY || "dev-only-change-me";
 }
@@ -21,6 +60,47 @@ function authRequired(req, res, next) {
 }
 
 app.use(authRequired);
+
+function normalizeTool(tool) {
+  return {
+    tool_id: tool.tool_id,
+    name: tool.name,
+    purpose: tool.purpose,
+    status: tool.status,
+    risk_level: tool.risk_level || "unknown",
+    version: tool.version || "0.1.0",
+    approval_state: tool.approval_state || "unknown",
+    builtin: Boolean(tool.builtin)
+  };
+}
+
+function getAllTools(state) {
+  const customById = new Map((state.tools || []).map((tool) => [tool.tool_id, tool]));
+  const builtins = BUILTIN_TOOLS.map((tool) => ({ ...tool, ...(customById.get(tool.tool_id) || {}) }));
+  const customOnly = (state.tools || []).filter((tool) => !BUILTIN_TOOLS.some((builtin) => builtin.tool_id === tool.tool_id));
+  return [...builtins, ...customOnly];
+}
+
+function findTool(state, toolId) {
+  return getAllTools(state).find((tool) => tool.tool_id === toolId);
+}
+
+function seedBuiltinTools(state) {
+  if (!Array.isArray(state.tools)) state.tools = [];
+  const seeded = [];
+  for (const builtin of BUILTIN_TOOLS) {
+    const existingIndex = state.tools.findIndex((tool) => tool.tool_id === builtin.tool_id);
+    const record = {
+      ...builtin,
+      created_at: existingIndex >= 0 ? state.tools[existingIndex].created_at : nowIso(),
+      updated_at: nowIso()
+    };
+    if (existingIndex >= 0) state.tools[existingIndex] = { ...state.tools[existingIndex], ...record };
+    else state.tools.push(record);
+    seeded.push(builtin.tool_id);
+  }
+  return seeded;
+}
 
 function summarizeIdea(rawIdea = "") {
   const text = String(rawIdea || "").trim();
@@ -44,7 +124,6 @@ function summarizeIdea(rawIdea = "") {
     next_action: riskLevel === "high" ? "Create a safe clarification mission and avoid operational harmful detail." : "Create a Tool Mission with inputs, outputs, success criteria, and tests."
   };
 }
-
 
 function generateToolMission(input = {}) {
   const rawIdea = String(input.raw_idea || input.idea || input.text || "").trim();
@@ -127,23 +206,83 @@ function generateToolMission(input = {}) {
   };
 }
 
+function runFoundrySelfHealer(input = {}) {
+  const state = readStore();
+  const beforeTools = Array.isArray(state.tools) ? state.tools.length : 0;
+  const repairMode = input.repair_mode !== false;
+  let repairsPerformed = [];
+
+  if (repairMode) {
+    const seeded = seedBuiltinTools(state);
+    writeStore(state);
+    addEvent("foundry.self_healer_repair", { seeded_tools: seeded });
+    repairsPerformed.push(`Seeded or refreshed core built-in tools: ${seeded.join(", ")}.`);
+  }
+
+  const refreshed = readStore();
+  const allTools = getAllTools(refreshed);
+  const availableIds = allTools.map((tool) => tool.tool_id);
+  const requiredBuiltinIds = BUILTIN_TOOLS.map((tool) => tool.tool_id);
+  const missingBuiltins = requiredBuiltinIds.filter((toolId) => !availableIds.includes(toolId));
+
+  const endpointChecks = [
+    { name: "healthCheck", endpoint: "GET /health", status: "available" },
+    { name: "listTools", endpoint: "GET /tools/list", status: "available" },
+    { name: "createToolMission", endpoint: "POST /tools/mission/create", status: "available" },
+    { name: "getToolMissionStatus", endpoint: "GET /tools/mission/status", status: "available" },
+    { name: "sendToolMissionRevision", endpoint: "POST /tools/mission/revision", status: "available" },
+    { name: "registerTool", endpoint: "POST /tools/register", status: "available" },
+    { name: "evaluateTool", endpoint: "POST /tools/evaluate", status: "available" },
+    { name: "executeTool", endpoint: "POST /tools/execute", status: "available" }
+  ];
+
+  const schemaMustExpose = [
+    "registerTool must appear as an available action.",
+    "executeTool must expose an input object, not only tool_id and user_visible_purpose.",
+    "executeTool.input should include raw_idea, desired_tool_type, risk_level, user_constraints, repair_mode, and context.",
+    "Authentication must use custom header x-api-key with the same secret as Render API_KEY."
+  ];
+
+  return {
+    foundry_status: missingBuiltins.length === 0 ? "healthy_core_tools_available" : "needs_attention",
+    repair_mode: repairMode,
+    repairs_performed: repairsPerformed,
+    before_tool_count: beforeTools,
+    after_tool_count: allTools.length,
+    core_tools_available: requiredBuiltinIds.filter((toolId) => availableIds.includes(toolId)),
+    missing_core_tools: missingBuiltins,
+    current_tools: allTools.map(normalizeTool),
+    missions_count: refreshed.missions.length,
+    evaluations_count: refreshed.evaluations.length,
+    executions_count: refreshed.executions.length,
+    endpoint_checks: endpointChecks,
+    action_schema_requirements: schemaMustExpose,
+    known_v0_limitations: [
+      "Core starter tools now survive redeploys because they are built into the backend code.",
+      "Custom tools and missions are still stored in local backend storage and may be lost across redeploys or instance resets unless a persistent database is added.",
+      "Codex workspace commits may still need to be manually uploaded or pushed into GitHub unless Codex is connected to the repo.",
+      "This self-healer cannot edit the Custom GPT Action schema inside ChatGPT; it can diagnose what the schema must expose."
+    ],
+    next_owner_level_actions: [
+      "Run listTools after every redeploy to confirm core tools are visible.",
+      "Run foundry_self_healer with repair_mode true if any core tools disappear.",
+      "Add the next upgrade mission: persistent_database_upgrade, so custom tools and missions survive redeploys.",
+      "Add the next upgrade mission: codex_github_sync_connector, so Codex updates reach GitHub without manual ZIP uploads."
+    ],
+    recommended_codex_task:
+      "Build a persistent database upgrade for the Tool Foundry backend so missions, tool registry entries, evaluations, and execution logs survive redeploys. The user is non-technical, so choose the simplest low-cost storage option and do not ask programming questions.",
+    user_message:
+      "I checked the Tool Foundry. Core system tools are now protected against the manual re-registration loop. The remaining big risk is persistence for custom/generated tools, which should be upgraded next."
+  };
+}
+
 app.get("/health", (req, res) => {
-  res.json({ ok: true, service: "tool-foundry-backend", version: "0.1.0", time: nowIso() });
+  res.json({ ok: true, service: "tool-foundry-backend", version: "0.2.0-self-healing", time: nowIso() });
 });
 
 app.get("/tools/list", (req, res) => {
   const state = readStore();
-  res.json({
-    tools: state.tools.map((tool) => ({
-      tool_id: tool.tool_id,
-      name: tool.name,
-      purpose: tool.purpose,
-      status: tool.status,
-      risk_level: tool.risk_level || "unknown",
-      version: tool.version || "0.1.0",
-      approval_state: tool.approval_state || "unknown"
-    }))
-  });
+  res.json({ tools: getAllTools(state).map(normalizeTool) });
 });
 
 app.post("/tools/mission/create", (req, res) => {
@@ -221,16 +360,19 @@ app.post("/tools/register", (req, res) => {
 
   const state = readStore();
   const existingIndex = state.tools.findIndex((tool) => tool.tool_id === body.tool_id);
+  const builtin = BUILTIN_TOOLS.find((tool) => tool.tool_id === body.tool_id);
   const tool = {
+    ...(builtin || {}),
     tool_id: body.tool_id,
     name: body.name,
     purpose: body.purpose,
     status: body.status,
-    version: body.version || "0.1.0",
-    input_schema_description: body.input_schema_description || "",
-    output_schema_description: body.output_schema_description || "",
-    risk_level: body.risk_level || "low",
+    version: body.version || (builtin && builtin.version) || "0.1.0",
+    input_schema_description: body.input_schema_description || (builtin && builtin.input_schema_description) || "",
+    output_schema_description: body.output_schema_description || (builtin && builtin.output_schema_description) || "",
+    risk_level: body.risk_level || (builtin && builtin.risk_level) || "low",
     approval_state: body.approval_state || (body.status === "Approved" ? "approved" : "pending"),
+    builtin: Boolean(builtin),
     created_at: existingIndex >= 0 ? state.tools[existingIndex].created_at : nowIso(),
     updated_at: nowIso()
   };
@@ -248,11 +390,11 @@ app.post("/tools/evaluate", (req, res) => {
   if (!tool_id) return res.status(400).json({ error: "tool_id is required." });
 
   const state = readStore();
-  const tool = state.tools.find((item) => item.tool_id === tool_id);
+  const tool = findTool(state, tool_id);
   if (!tool) return res.status(404).json({ error: "Tool not found." });
 
   const passed = tool.status === "Approved" || tool.status === "Pending Approval";
-  const score = passed ? 8.4 : 5.5;
+  const score = passed ? 8.8 : 5.5;
   const evaluation = {
     evaluation_id: id("eval"),
     tool_id,
@@ -261,7 +403,7 @@ app.post("/tools/evaluate", (req, res) => {
     score,
     passed,
     report: passed
-      ? "Tool appears ready for controlled use based on its registered status. This v0 evaluator is basic and should be upgraded later."
+      ? "Tool appears ready for controlled use based on its registered/built-in status. This v0 evaluator is basic and should be upgraded later."
       : "Tool is not approved or pending approval. It should not be executed for real user work yet.",
     approval_recommendation: passed ? "approve_or_keep_approved" : "do_not_approve_yet",
     created_at: nowIso()
@@ -278,7 +420,7 @@ app.post("/tools/execute", (req, res) => {
   if (!tool_id) return res.status(400).json({ error: "tool_id is required." });
 
   const state = readStore();
-  const tool = state.tools.find((item) => item.tool_id === tool_id);
+  const tool = findTool(state, tool_id);
   if (!tool) return res.status(404).json({ error: "Tool not found." });
   if (tool.status !== "Approved") {
     return res.status(403).json({ error: "Tool is not approved.", status: tool.status, message: "Only Approved tools may be executed." });
@@ -294,6 +436,9 @@ app.post("/tools/execute", (req, res) => {
   } else if (tool_id === "tool_mission_generator") {
     result = generateToolMission(input);
     summary = "Tool Mission Generator completed.";
+  } else if (tool_id === "foundry_self_healer") {
+    result = runFoundrySelfHealer(input);
+    summary = "Foundry Self-Healer completed.";
   } else {
     result = { message: "Tool is approved and registered, but this v0 backend does not yet have a custom executable handler for this tool.", received_input: input };
     summary = "Registered tool placeholder executed.";

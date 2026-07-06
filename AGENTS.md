@@ -26,3 +26,17 @@ Security rules:
 - Require approval for tools that use external accounts, spend money, store sensitive data, send messages, publish content, or affect real-world systems.
 
 Completion reports must be non-technical.
+
+
+## Self-Healing Tool Foundry Rule
+
+Core starter tools must not require manual re-registration after redeploy.
+
+The backend should always expose these built-in tools from code:
+- idea_analyzer
+- tool_mission_generator
+- foundry_self_healer
+
+If a change would make these tools disappear from `/tools/list`, reject that change or add a repair path.
+
+The user is non-technical. Do not ask the user to debug registry resets, schema drift, Render redeploy issues, or GitHub branch problems. Build repair tools and plain-English owner-level instructions instead.
