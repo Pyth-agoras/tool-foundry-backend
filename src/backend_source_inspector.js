@@ -16,12 +16,12 @@ const ALLOWED_FULL_FILE_PATHS = new Set([
   'src/tool_installation_validator.js',
   'src/tool_failure_diagnoser.js',
   'src/tool_quality_tester.js',
-
-  // Add these:
   'src/tool_registry_auditor.js',
   'src/foundry_operator.js',
   'src/tool_workflow_orchestrator.js',
-  'src/tool_call_contract_normalizer.js'
+  'src/tool_call_contract_normalizer.js',
+  'src/workflow_dead_end_resolver.js',
+  'src/tool_readiness_checker.js'
 ]);
 
 const DEFAULT_LAYOUT_PATHS = [
