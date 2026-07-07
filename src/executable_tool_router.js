@@ -30,7 +30,68 @@ function generateMission(input={}){const raw=input.raw_idea||input.idea||input.a
 function planPdfTool(input={}){const raw=input.raw_request||input.raw_idea||'PDF/document analysis tool';return{ok:true,mission:{tool_name_suggestion:`${tokenize(raw).slice(0,6).join('_')||'pdf_document'}_tool`,user_facing_purpose:`Help the owner create a PDF/document analysis tool for: ${raw}.`,capability_needed:'Accept supported document inputs, analyze requested content, and return traceable results where possible.',plain_english_summary:`This mission plans a safe PDF/document-analysis tool for: ${raw}.`}}}
 function selfHeal(){return{status:'ready_for_operator_use',core_tools_ready:true,core_tools_present:['idea_analyzer','tool_mission_generator','foundry_self_healer','foundry_operator'],missing_core_tools:[],configured_values:{API_KEY:Boolean(process.env.API_KEY),GITHUB_TOKEN:Boolean(process.env.GITHUB_TOKEN),GITHUB_OWNER:Boolean(process.env.GITHUB_OWNER),GITHUB_REPO:Boolean(process.env.GITHUB_REPO),GITHUB_BRANCH:Boolean(process.env.GITHUB_BRANCH),RENDER_DEPLOY_HOOK_URL:Boolean(process.env.RENDER_DEPLOY_HOOK_URL),PUBLIC_BASE_URL:Boolean(process.env.PUBLIC_BASE_URL)},current_tools:getTools(),counts:{tools:getTools().length,missions:mutableMissions.length,evaluations:mutableEvaluations.length,executions:mutableExecutions.length}}}
 async function githubPutFile(path,content){const owner=process.env.GITHUB_OWNER,repo=process.env.GITHUB_REPO,branch=process.env.GITHUB_BRANCH||'main',token=process.env.GITHUB_TOKEN;if(!owner||!repo||!token)throw new Error('GitHub write settings are not configured.');const api=`https://api.github.com/repos/${owner}/${repo}/contents/${path.split('/').map(encodeURIComponent).join('/')}`;const headers={Authorization:`Bearer ${token}`,Accept:'application/vnd.github+json','User-Agent':'tool-foundry-backend'};let sha;const current=await fetch(`${api}?ref=${encodeURIComponent(branch)}`,{headers});if(current.ok)sha=(await current.json()).sha;const put=await fetch(api,{method:'PUT',headers:{...headers,'Content-Type':'application/json'},body:JSON.stringify({message:`Update ${path}`,content:Buffer.from(content,'utf8').toString('base64'),branch,sha})});if(!put.ok)throw new Error(`GitHub update failed for ${path}: ${put.status} ${await put.text()}`);const body=await put.json();return{path,commit:body.commit&&body.commit.sha}}
-async function foundryOperator(input={}){const result={mode:input.mode||'diagnose',started_at:new Date().toISOString(),diagnosis_before:selfHeal(),actions_taken:[],blockers:[],results:{}};const approved=input.approved===true&&input.approval_confirmed===true;if(Array.isArray(input.files)&&input.files.length){if(!approved){result.blockers.push('Owner approval and approval confirmation are required before backend file updates.');result.next_action='Get owner approval before applying file changes.';return result}result.results.github_updates=[];for(const file of input.files)if(file&&file.path&&typeof file.content==='string'){const update=await githubPutFile(file.path,file.content);result.results.github_updates.push(update);result.actions_taken.push(`updated:${file.path}`)}if(process.env.RENDER_DEPLOY_HOOK_URL){const deploy=await fetch(process.env.RENDER_DEPLOY_HOOK_URL,{method:'POST'});result.results.render_deploy={skipped:false,ok:deploy.ok,status:deploy.status};result.actions_taken.push('render_deploy_triggered')}else result.results.render_deploy={skipped:true,reason:'RENDER_DEPLOY_HOOK_URL not configured'}}result.results.diagnosis=selfHeal();result.next_action=result.blockers.length?'Resolve blockers before continuing.':'Operator completed the requested action.';return result}
+async function foundryOperator(input={}) {
+  const result = {
+    mode: input.mode || 'diagnose',
+    started_at: new Date().toISOString(),
+    diagnosis_before: selfHeal(),
+    actions_taken: [],
+    blockers: [],
+    results: {}
+  };
+
+  const approved =
+    input.approved === true &&
+    input.approval_confirmed === true;
+
+  if (Array.isArray(input.files) && input.files.length) {
+    if (!approved) {
+      result.blockers.push(
+        'Owner approval and approval confirmation are required before backend file updates.'
+      );
+      result.next_action =
+        'Get owner approval before applying file changes.';
+      return result;
+    }
+
+    result.results.github_updates = [];
+
+    for (const file of input.files) {
+      if (file && file.path && typeof file.content === 'string') {
+        const update = await githubPutFile(file.path, file.content);
+        result.results.github_updates.push(update);
+        result.actions_taken.push(`updated:${file.path}`);
+      }
+    }
+
+    if (process.env.RENDER_DEPLOY_HOOK_URL) {
+      const deploy = await fetch(
+        process.env.RENDER_DEPLOY_HOOK_URL,
+        { method: 'POST' }
+      );
+
+      result.results.render_deploy = {
+        ok: deploy.ok,
+        status: deploy.status
+      };
+
+      result.actions_taken.push('render_deploy_triggered');
+    }
+  }
+
+  result.results.verification = {
+    health_check: 'required',
+    tools_list_check: 'required',
+    live_execution_check: 'required'
+  };
+
+  result.results.diagnosis = selfHeal();
+
+  result.next_action =
+    'Verify deployment adoption before marking success.';
+
+  return result;
+}
 function scoreRegistryMatch(requestText,tool){if(!tool||normalize(tool.status)!=='approved')return null;const haystack=normalize([tool.tool_id,tool.name,tool.purpose,tool.input_schema_description,tool.output_schema_description].filter(Boolean).join(' '));let overlap=0;for(const token of new Set(tokenize(requestText)))if(haystack.includes(token))overlap++;if(overlap>=4)return{tool_id:tool.tool_id,name:tool.name,fit_level:'strong',reason:'The approved tool purpose substantially overlaps with the requested capability.',score:overlap};if(overlap>=2)return{tool_id:tool.tool_id,name:tool.name,fit_level:'partial',reason:'The approved tool overlaps with part of the requested capability.',score:overlap};return null}
 function toolReadinessChecker(input={}){const raw=String(input.raw_idea||'').trim();if(!raw)return{existing_capability_match:null,new_tool_needed:false,recommended_tool_id:null,risk_level:'low',approval_required:false,reason:'input.raw_idea is required before readiness can be checked.',next_action:'Provide input.raw_idea and run the checker again.'};const matches=getTools().map(t=>scoreRegistryMatch(raw,t)).filter(Boolean).sort((a,b)=>b.score-a.score);const best=matches[0]||null;const strong=best&&best.fit_level==='strong';return{existing_capability_match:best,new_tool_needed:!strong,recommended_tool_id:strong?best.tool_id:`${tokenize(raw).slice(0,5).join('_')||'new_tool'}_tool`,risk_level:'low',approval_required:false,next_action:strong?`Use ${best.tool_id}.`:'Create a tool implementation for the missing capability.'}}
 function fallbackExecutableToolBuilder(input={}){return{ok:true,tool_id:input.tool_id||'unknown_tool',recommended_files_payload:[],router_update_summary:'Fallback handler only.',handler_summary:'No files generated.',approval_required:true,next_action:'Use installed executable_tool_builder module.'}}
