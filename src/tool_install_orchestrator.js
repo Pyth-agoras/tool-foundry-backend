@@ -8,3 +8,8 @@ else{
   next_required_tool='foundry_operator';
   next_required_action='Install approved files and deploy.';
 }
+module.exports = {
+  METADATA,
+  execute,
+  install
+};
