@@ -5,7 +5,7 @@ const router = require('./executable_tool_router');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-const DEPLOYMENT_ADOPTION_MARKER = 'deployment_adoption_test_2026_07_06_tool_failure_diagnoser';
+const DEPLOYMENT_ADOPTION_MARKER = 'deployment_adoption_2026_07_07_multi_rule_set_image_builder_live_v1';
 
 app.use(express.json({ limit: '2mb' }));
 
