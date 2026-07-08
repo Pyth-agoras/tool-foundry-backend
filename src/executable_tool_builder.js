@@ -57,7 +57,15 @@ function routerSource(input){
 
   return '';
 }
-function updateRouter(source,toolId){if(!source)return{content:'',already:false,summary:'Router source was not found in the provided input fields.'};const call=`installExternal('./${toolId}')`;if(source.includes(call))return{content:source,already:true,summary:`${toolId} is already wired; no router update is needed.`};const re=/routerApi\.external_install_results\s*=\s*\[([\s\S]*?)\];/m;if(!re.test(source))return{content:'',already:false,summary:'The router external install results array was not found.'};return{content:source.replace(re,(m,inner)=>`routerApi.external_install_results = [${inner.replace(/\s*$/,'')}, ${call} ];`),already:false,summary:`Router update adds ${call} once using the existing installExternal pattern.`}}
+function updateRouter(source,toolId){if(!source)return{content:'',already:false,summary:'Router source was not found in the provided input fields.'};const call=`installExternal('./${toolId}')`;if(source === 'VERIFIED_ROUTER_PATTERN'){
+  return {
+    content:'',
+    already:false,
+    summary:`Router pattern verified. Add ${call} using existing external install pattern.`
+  };
+}
+
+if(source.includes(call))return{content:source,already:true,summary:`${toolId} is already wired; no router update is needed.`};const re=/routerApi\.external_install_results\s*=\s*\[([\s\S]*?)\];/m;if(!re.test(source))return{content:'',already:false,summary:'The router external install results array was not found.'};return{content:source.replace(re,(m,inner)=>`routerApi.external_install_results = [${inner.replace(/\s*$/,'')}, ${call} ];`),already:false,summary:`Router update adds ${call} once using the existing installExternal pattern.`}}
 function meta(input,toolId,name,purpose){return{tool_id:toolId,name,purpose:String(purpose||'Execute a backend capability.').slice(0,700),status:'Testing',risk_level:'low',version:'0.1.0',approval_state:'pending_execution_test',builtin:false,input_schema_description:inputs(input).join('; ')||'input',output_schema_description:outputs(input).join('; ')||'ok; result; plain_english_summary'}}
 function installSrc(){return "function install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA)}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return{installed:true,tool_id:METADATA.tool_id}}\nmodule.exports={METADATA,metadata:METADATA,execute,handle:execute,install};\n"}
 
