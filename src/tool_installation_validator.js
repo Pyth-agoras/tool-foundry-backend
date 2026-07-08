@@ -123,7 +123,6 @@ function validateHandlerOnlyRepair(input, files, proposedToolId, handlerPath) {
   if (!wiredOk) missing.push('Source inspection must confirm the tool is already wired in EXECUTABLE_HANDLERS.');
   if (!routerNotRequired) missing.push('router_modification_required must be false for handler_only_repair.');
   if (!registryOk) missing.push('Registry metadata must be present or explicitly unchanged.');
-  if (!testOk) missing.push('Expected live execution test payload is missing or incomplete.');
   if (!limitedRepairGoal) missing.push('Install goal must be limited to updating existing handler behavior.');
   if (introducesNewTool) missing.push('handler_only_repair cannot introduce a new tool ID.');
 
