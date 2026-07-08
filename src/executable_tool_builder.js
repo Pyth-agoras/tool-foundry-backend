@@ -88,7 +88,17 @@ async function execute(input={}){
   const m=meta(input,toolId,name,purpose);const router=updateRouter(routerSource(input),toolId);let archetype='utility',handler;
   if(isDecisionTool(input,toolId)){archetype='decision';handler=decisionHandler(m)}else if(isNoteTool(input,toolId)){archetype='note_cleanup_utility';handler=noteHandler(m)}else handler=utilityHandler(m,input.required_outputs||input.outputs||input.output_fields||input.output_schema);
   const files=[{path:`src/${toolId}.js`,content:handler}];if(router.content&&!router.already)files.push({path:'src/executable_tool_router.js',content:router.content});
-  const missing=[];if(!router.content)missing.push('full router source content from backend_source_inspector');if(router.content&&!router.content.includes(`./${toolId}`))missing.push('router external install wiring');if(archetype==='note_cleanup_utility'&&(handler.includes('workflow_status')||handler.includes('next_required_tool')))missing.push('note cleanup handler contaminated by workflow fields');
+  const missing=[];
+if(!router.content && !routerSource(input)) {
+  missing.push('verified router source or router integration metadata required');
+}
+if(router.content && !router.content.includes(`./${toolId}`)) {
+  missing.push('router external install wiring');
+}
+if(archetype==='note_cleanup_utility' &&
+   (handler.includes('workflow_status')||handler.includes('next_required_tool'))) {
+  missing.push('note cleanup handler contaminated by workflow fields');
+}
   return{ok:missing.length===0,tool_id:toolId,archetype,recommended_files_payload:files,handler_file_path:`src/${toolId}.js`,router_update_path:'src/executable_tool_router.js',router_update_summary:router.summary,handler_summary:archetype==='decision'?`Generated decision/orchestration handler for ${toolId}.`:`Generated ${archetype} handler for ${toolId}.`,registry_metadata:m,execution_test_payload:testPayload(input,toolId),safety_notes:['Generated payload only; no files are modified by executable_tool_builder.','Use tool_installation_validator before foundry_operator.','Decision-tool mode requires both decision identity and decision/workflow outputs.','Domain-specific outputs take priority over workflow examples.'],approval_required:true,next_action:missing.length?`Provide missing input before installation: ${missing.join(', ')}.`:'Validate this payload with tool_installation_validator before calling foundry_operator.',missing_requirements:missing};
 }
 function install(router){if(!router)return;if(Array.isArray(router.BUILTIN_TOOL_METADATA)){const i=router.BUILTIN_TOOL_METADATA.findIndex(t=>t.tool_id===METADATA.tool_id);if(i>=0)router.BUILTIN_TOOL_METADATA[i]=METADATA;else router.BUILTIN_TOOL_METADATA.push(METADATA)}if(router.EXECUTABLE_HANDLERS)router.EXECUTABLE_HANDLERS[METADATA.tool_id]=execute;if(typeof router.registerTool==='function')router.registerTool(METADATA);return{installed:true,tool_id:METADATA.tool_id}}
