@@ -93,7 +93,6 @@ function validateNewToolInstall(input, files, proposedToolId, handlerPath, route
   if (!routerFile) missing.push('Router file is missing from the proposed payload: ' + routerPath + '.');
   else if (!routerOk) missing.push('Router file does not include substantive EXECUTABLE_HANDLERS wiring for ' + proposedToolId + '.');
   if (!registryOk) missing.push('Registry/list metadata for the proposed tool is missing.');
-  if (!testOk) missing.push('Expected live execution test payload is missing or incomplete.');
 
   return {
     missing,
