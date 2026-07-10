@@ -19,6 +19,18 @@ paths:
       responses:
         '200':
           description: Registry snapshot
+  /v2/tools/{tool_id}:
+    get:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: path
+          name: tool_id
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Tool metadata}
   /v2/tools/{tool_id}/execute:
     post:
       security:
@@ -32,6 +44,67 @@ paths:
       responses:
         '200': {description: Tool execution result}
         '409': {description: Tool is not Approved}
+  /v2/ideas/analyze:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200': {description: Analysed idea}
+  /v2/tools/create:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200': {description: Created tool scaffold}
+  /v2/source/inspect:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200': {description: Source inspection result}
+  /v2/preflight/verify:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200': {description: Preflight verification result}
+  /v2/install:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200': {description: Install deployment result}
+  /v2/deployments/verify:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200': {description: Deployment verification result}
+  /v2/tools/{tool_id}/repair:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      parameters:
+        - in: path
+          name: tool_id
+          required: true
+          schema: {type: string}
+      responses:
+        '200': {description: Repair result}
+  /v2/registry/audit:
+    post:
+      security:
+        - bearerAuth: []
+        - apiKeyAuth: []
+      responses:
+        '200': {description: Registry audit result}
 components:
   securitySchemes:
     bearerAuth:
