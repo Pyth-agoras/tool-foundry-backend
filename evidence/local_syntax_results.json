@@ -1,0 +1,42 @@
+{
+  "payload/src/authentication_middleware.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "payload/src/mutation_gate.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "payload/src/preflight_repair_verifier.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "payload/src/server.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "scripts/apply_foundation_security_patch.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "test/authentication_middleware.test.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "test/mutation_gate.test.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "test/preflight_repair_verifier.test.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "test/router_security.test.js": {
+    "passed": true,
+    "stderr": ""
+  },
+  "test/server_security.test.js": {
+    "passed": true,
+    "stderr": ""
+  }
+}
