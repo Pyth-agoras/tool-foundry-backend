@@ -1,0 +1,6 @@
+'use strict';
+const metadata={"tool_id":"tool_repairer","name":"Tool Repairer","version":"2.0.0","purpose":"Diagnose one failing ordinary tool and produce the smallest isolated replacement plan.","lifecycle_status":"Approved","risk_level":"low","input_schema":{"type":"object","required":["tool_id","failure","source","tests"]},"output_schema":{"type":"object","required":["repair_scope","allowed_paths","diagnosis","replacement_required"]},"protected_effects":[]};
+function validateInput(input){return {ok:input&&typeof input==='object',errors:input&&typeof input==='object'?[]:['input must be an object']}}
+async function execute(input={}){const id=String(input.tool_id||'');if(!id)throw new Error('tool_id required');const core=Array.isArray(input.changed_paths)&&input.changed_paths.some(p=>!new RegExp(`^(src/tools/${id}\\.js|test/tools/${id}\\.test\\.js|tool-manifests/${id}\\.json)$`).test(p));return{repair_scope:core?'core_maintenance':'ordinary_tool',allowed_paths:[`src/tools/${id}.js`,`test/tools/${id}.test.js`,`tool-manifests/${id}.json`],diagnosis:String(input.failure||'unknown failure'),replacement_required:true,owner_approval_required:core}}
+const tests=[{name:'metadata',run:()=>metadata.tool_id==='tool_repairer'}];
+module.exports={metadata,validateInput,execute,tests};

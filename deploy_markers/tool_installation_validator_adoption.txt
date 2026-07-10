@@ -1,6 +1,0 @@
-tool_installation_validator deployment adoption marker
-Latest validator commits to adopt:
-- src/tool_installation_validator.js 41c17f049264b23dd7ce251566ebb4384cf7756c
-- src/executable_tool_router.js 7ba59d056d87c634a840cab4e16f8104ea5124d0
-- tools/tool_installation_validator.tool.json 266e229679029e5d6abb85ee6131efd97a48118d
-Requested adoption check timestamp: 2026-07-06T17:21:30Z

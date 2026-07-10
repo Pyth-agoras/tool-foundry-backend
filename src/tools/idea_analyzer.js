@@ -1,0 +1,6 @@
+'use strict';
+const metadata={"tool_id":"idea_analyzer","name":"Idea Analyzer","version":"2.0.0","purpose":"Convert an owner request into a practical tool specification.","lifecycle_status":"Approved","risk_level":"low","input_schema":{"type":"object","required":["raw_idea"]},"output_schema":{"type":"object","required":["practical_goal","required_inputs","required_outputs","risk_level","protected_effects","proposed_tool_id","acceptance_criteria"]},"protected_effects":[]};
+function validateInput(input){return {ok:input&&typeof input==='object',errors:input&&typeof input==='object'?[]:['input must be an object']}}
+async function execute(input={}){const idea=String(input.raw_idea||'').trim();if(!idea)throw new Error('raw_idea is required');const id=idea.toLowerCase().replace(/[^a-z0-9]+/g,'_').replace(/^_|_$/g,'').slice(0,48)||'new_tool';return{practical_goal:idea,required_inputs:input.required_inputs||[],required_outputs:input.required_outputs||[],risk_level:input.risk_level||'low',protected_effects:input.protected_effects||[],proposed_tool_id:id,acceptance_criteria:input.acceptance_criteria||[]}}
+const tests=[{name:'metadata',run:()=>metadata.tool_id==='idea_analyzer'}];
+module.exports={metadata,validateInput,execute,tests};

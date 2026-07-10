@@ -1,7 +1,0 @@
-{
-  "package.json": "2b884bc1a9ce5e9c874d6c466fa3e4dc17c68bafd5d3912355d1d22a252c9f6f",
-  "src/authentication_middleware.js": "85b0658f03baf81f601513223e15e37402a33631fb1c7b01452942654ad28122",
-  "src/mutation_gate.js": "6fde834f17e88e62d2e25923e265311d24b6d53c3aa4fbef44ad423139d84ed5",
-  "src/preflight_repair_verifier.js": "70eed4d0a3ab942f7701fca2cd6928183caf4ce12837fc4325b426d310fef0b3",
-  "src/server.js": "a23f7f2fbdec6e38f17d19543d4c74d56d63a15b3f85d73e0290984f3939c34c"
-}

@@ -1,0 +1,6 @@
+'use strict';
+const metadata={"tool_id":"tool_installer_deployer","name":"Tool Installer Deployer","version":"2.0.0","purpose":"Install only a preflight-passed, exactly approved branch manifest.","lifecycle_status":"Approved","risk_level":"low","input_schema":{"type":"object","required":["manifest","preflight","approval","adapter"]},"output_schema":{"type":"object","required":["final_status","transaction"]},"protected_effects":[]};
+function validateInput(input){return {ok:input&&typeof input==='object',errors:input&&typeof input==='object'?[]:['input must be an object']}}
+const {verifyApproval}=require('../mutation/approval-verifier');const {BranchTransaction}=require('../mutation/branch-transaction');async function execute(input={}){if(!input.preflight||input.preflight.can_install!==true)throw new Error('preflight pass required');const a=verifyApproval(input.manifest,input.approval);if(!a.ok)throw new Error(a.blockers.join('; '));const tx=new BranchTransaction();const result=await tx.run(input.manifest,input.adapter);return{final_status:result.ok?'committed':'rolled_back',transaction:result}}
+const tests=[{name:'metadata',run:()=>metadata.tool_id==='tool_installer_deployer'}];
+module.exports={metadata,validateInput,execute,tests};
