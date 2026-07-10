@@ -1,23 +1,30 @@
-# Tool Foundry foundation-security recovery bundle
+# Trusted Repository Writer v1
 
-Mission: `mission_1783652475518`
+A fail-closed repository writer for recovery and maintenance work.
 
-Base commit: `f449950a77e48e85f2a2e2cb9d18e54614bf4a66`
+## Guarantees
 
-Recommended branch: `recovery/foundation-security-f449950`
+- Branch-only by default; direct base/default branch writes are rejected.
+- Exact validation evidence and exact owner approval are mandatory.
+- Every file must match an approved path and expected pre-write SHA-256 hash.
+- Replacement content must be complete, untruncated, unredacted, non-empty, and secret-free.
+- Only manifest-listed paths may change.
+- `git diff --check` and every declared test must pass before commit.
+- A backup branch is created before changes.
+- Optional push, deploy, and health-adoption verification occur only after tests pass.
+- Any post-write failure triggers rollback to the backup branch.
+- Every attempt produces a redacted audit record.
+- Reusing a completed transaction ID is idempotent.
 
-This bundle contains a hash-guarded patch applicator, complete new security modules,
-focused tests, and manifest evidence. It performs no GitHub operation itself.
+## Run
 
-The external trusted installer must:
+```bash
+npm test
+node bin/trusted-repository-writer.js examples/manifest.example.json
+```
 
-1. Verify `main` still equals the exact base commit.
-2. Create the recovery branch from that commit.
-3. Run the applicator from the repository root.
-4. Copy the test files into `test/`.
-5. Run all new and existing tests.
-6. Run the preflight verifier with actual evidence.
-7. Open a draft pull request only if all checks pass.
+The writer does not create or request credentials. Supply credentials only through the trusted runner's environment or secret store.
 
-`mutation_gates_enforced` intentionally remains `false` until a later transactional
-operator and automatic deployment rollback are live.
+## Tool Foundry adapter
+
+`adapter/trusted_repository_writer.js` is a future Tool Foundry handler. It is intentionally not installed by this package. Install it only after the backend's authentication and mutation gates are active and its new-tool wiring has been separately validated and approved.

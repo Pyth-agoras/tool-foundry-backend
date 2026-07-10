@@ -1,1 +1,16 @@
-{"name":"tool-foundry-backend","version":"0.2.0","private":true,"type":"commonjs","main":"server.js","scripts":{"start":"node server.js"},"dependencies":{"express":"^4.18.2"},"engines":{"node":">=18"}}
+{
+  "name": "trusted-repository-writer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Fail-closed branch writer with hash, validation, approval, test, deployment, verification, rollback, and audit gates.",
+  "type": "commonjs",
+  "bin": {
+    "trusted-repository-writer": "bin/trusted-repository-writer.js"
+  },
+  "scripts": {
+    "test": "node test/run.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
