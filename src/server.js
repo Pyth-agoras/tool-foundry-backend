@@ -9,9 +9,9 @@ const registry=new RegistryService();
 function json(res,status,body){res.writeHead(status,{'content-type':'application/json'});res.end(JSON.stringify(body))}
 async function readBody(req){let s='';for await(const c of req)s+=c;if(!s)return{};return JSON.parse(s)}
 function requiresAuth(pathname){return pathname!=='/health';}
-function mutationControlsAvailable(){return Boolean(config.apiKey)&&Boolean(process.env.APPROVAL_SIGNING_SECRET || process.env.APPROVAL_SECRET);}
-function authConfigured(){return Boolean(config.apiKey);}
-
+function authConfigured(){return Boolean(config.apiKey);}function mutationControlsAvailable(){
+  return Boolean(config.apiKey) && Boolean(config.approvalSigningSecret) && Boolean(config.githubRepository) && Boolean(config.githubToken) && Boolean(config.renderDeployHookUrl);
+}
 function healthPayload(){return {status:'ok',service:config.service,version:config.version,commit:config.commit,deployment_id:config.deploymentId,started_at:startedAt,auth_enforced:authConfigured(),mutation_gates_enforced:mutationControlsAvailable(),registry_loaded:true,registry_tool_count:registry.tools.size,registry_load_failures:registry.failures.length};}
 async function route(req,res){
   const url=new URL(req.url,'http://localhost');
