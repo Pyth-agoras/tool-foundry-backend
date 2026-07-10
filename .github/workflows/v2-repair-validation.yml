@@ -1,0 +1,23 @@
+name: v2-repair-validation
+on:
+  pull_request:
+  push:
+    branches:
+      - replacement/tool-foundry-v2
+permissions:
+  contents: read
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - run: git diff --check
+      - run: npm ci --ignore-scripts
+      - run: npm test
+      - run: npm run validate
+      - run: npm run verify:imports
+      - run: npm run validate:openapi
+      - run: npm run test:clean

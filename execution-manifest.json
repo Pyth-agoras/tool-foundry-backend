@@ -1,0 +1,139 @@
+{
+  "schema_version": 2,
+  "repository": "Pyth-agoras/tool-foundry-backend",
+  "original_base_commit": "56ab494159cd0f877aa2c666639f1cba8dc8753a",
+  "current_v2_source_commit": "9a23f5738fecf33f1d98bb69f901ea37335122e0",
+  "protected_backup_branch": "backup/pre-tool-foundry-v2-20260710T113544Z",
+  "v2_review_branch": "replacement/tool-foundry-v2",
+  "original_inventory": [
+    {
+      "path": "src/tools/tool_readiness_checker.js",
+      "operation": "delete",
+      "purpose": "legacy V1 readiness checker removed from V2"
+    }
+  ],
+  "repair_inventory": [
+    {
+      "path": ".github/workflows/v2-repair-validation.yml",
+      "operation": "add",
+      "purpose": "CI validation without repository mutation"
+    },
+    {
+      "path": "src/github/repository-writer.js",
+      "operation": "add",
+      "purpose": "internal repository writer"
+    },
+    {
+      "path": "src/workspace/temp-workspace.js",
+      "operation": "add",
+      "purpose": "temporary clean workspace"
+    },
+    {
+      "path": "src/deployment/deployment-orchestrator.js",
+      "operation": "add",
+      "purpose": "server-side deployment orchestration"
+    },
+    {
+      "path": "src/deployment/deployment-marker.js",
+      "operation": "add",
+      "purpose": "deployment adoption marker"
+    },
+    {
+      "path": "src/ops/rollback-manager.js",
+      "operation": "add",
+      "purpose": "rollback and cleanup"
+    },
+    {
+      "path": "src/ops/error-redactor.js",
+      "operation": "add",
+      "purpose": "redacted error handling"
+    },
+    {
+      "path": "test/repair-lifecycle.test.js",
+      "operation": "add",
+      "purpose": "repair lifecycle tests"
+    },
+    {
+      "path": "src/tools/tool_installer_deployer.js",
+      "operation": "replace",
+      "purpose": "fail-closed installer with internal writer"
+    },
+    {
+      "path": "src/tools/tool_preflight_verifier.js",
+      "operation": "replace",
+      "purpose": "real preflight evidence"
+    },
+    {
+      "path": "src/mutation/approval-verifier.js",
+      "operation": "replace",
+      "purpose": "signed approval verification"
+    },
+    {
+      "path": "src/mutation/manifest-verifier.js",
+      "operation": "replace",
+      "purpose": "real manifest verification"
+    },
+    {
+      "path": "src/mutation/branch-transaction.js",
+      "operation": "replace",
+      "purpose": "multi-stage transaction lifecycle"
+    },
+    {
+      "path": "src/server.js",
+      "operation": "replace",
+      "purpose": "health semantics and guarded routes"
+    },
+    {
+      "path": "src/config.js",
+      "operation": "replace",
+      "purpose": "required configuration and no fallback secrets"
+    },
+    {
+      "path": "execution-manifest.json",
+      "operation": "replace",
+      "purpose": "complete execution manifest"
+    },
+    {
+      "path": "test/core.test.js",
+      "operation": "replace",
+      "purpose": "security lifecycle tests"
+    },
+    {
+      "path": "test/tools.test.js",
+      "operation": "replace",
+      "purpose": "tool and preflight tests"
+    }
+  ],
+  "verification_commands": [
+    "git diff --check",
+    "npm ci --ignore-scripts",
+    "npm test",
+    "npm run validate",
+    "npm run verify:imports",
+    "npm run validate:openapi",
+    "npm run test:clean"
+  ],
+  "deployment_checks": [
+    "server-side deployment trigger",
+    "deployment marker created",
+    "deployment adoption verified"
+  ],
+  "rollback_definition": {
+    "trigger": "any post-write, test, push, deployment, or adoption-verification failure",
+    "action": "delete temporary workspace and transaction branch; preserve default, review, and backup branches"
+  },
+  "transaction_boundaries": [
+    "approval_verification",
+    "preflight",
+    "workspace_creation",
+    "branch_preparation",
+    "file_application",
+    "validation",
+    "commit",
+    "push",
+    "pull_request_preparation",
+    "deployment_trigger",
+    "adoption_verification",
+    "rollback_or_cleanup"
+  ]
+}

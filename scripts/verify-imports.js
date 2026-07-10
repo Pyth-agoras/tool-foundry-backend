@@ -1,0 +1,1 @@
+'use strict';const fs=require('fs'),path=require('path');function walk(d){return fs.readdirSync(d,{withFileTypes:true}).flatMap(e=>e.isDirectory()?walk(path.join(d,e.name)):[path.join(d,e.name)])}for(const f of walk(path.join(__dirname,'..','src')).filter(x=>x.endsWith('.js'))){if(f.endsWith('server.js'))continue;require(f)}console.log('imports passed');

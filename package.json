@@ -1,16 +1,21 @@
 {
-  "name": "trusted-repository-writer",
-  "version": "1.0.0",
+  "name": "tool-foundry-backend",
+  "version": "2.0.0",
   "private": true,
-  "description": "Fail-closed branch writer with hash, validation, approval, test, deployment, verification, rollback, and audit gates.",
+  "description": "Clean Tool Foundry V2 backend for creating, verifying, installing, deploying, repairing, auditing, and operating isolated backend tools.",
   "type": "commonjs",
-  "bin": {
-    "trusted-repository-writer": "bin/trusted-repository-writer.js"
-  },
+  "main": "src/server.js",
   "scripts": {
-    "test": "node test/run.js"
+    "start": "node src/server.js",
+    "test": "node --test test/*.test.js",
+    "test:clean": "node scripts/clean-install-test.js",
+    "validate": "node scripts/validate-all.js",
+    "validate:openapi": "node scripts/verify-openapi.js",
+    "verify:imports": "node scripts/verify-imports.js"
   },
   "engines": {
     "node": ">=18"
-  }
+  },
+  "dependencies": {},
+  "devDependencies": {}
 }

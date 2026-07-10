@@ -1,0 +1,1 @@
+'use strict';const fs=require('fs'),path=require('path');const y=fs.readFileSync(path.join(__dirname,'..','openapi.yaml'),'utf8');for(const p of ['/health:','/v2/tools:','/v2/tools/{tool_id}/execute:'])if(!y.includes(p))throw new Error(`missing ${p}`);console.log('openapi passed');
