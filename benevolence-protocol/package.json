@@ -1,0 +1,13 @@
+{
+  "name": "transparent-benefit-protocol",
+  "version": "1.0.0",
+  "private": false,
+  "description": "Model-independent honesty, human-oversight, and benefit-evidence policy with structural evaluation API",
+  "license": "MIT",
+  "type": "commonjs",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node --test tests/*.test.js"
+  },
+  "engines": {"node": ">=20"}
+}
