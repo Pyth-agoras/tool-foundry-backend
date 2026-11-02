@@ -1,0 +1,26 @@
+{
+  "openapi": "3.1.0",
+  "info": {"title": "Transparent Benefit Protocol API", "version": "1.0.0", "description": "Portable policy and structural evaluation. A pass is not an independent truth, consent, or benevolence certification."},
+  "paths": {
+    "/health": {"get": {"summary": "Health check", "responses": {"200": {"description": "Healthy"}}}},
+    "/protocol": {"get": {"summary": "Download machine-readable protocol", "responses": {"200": {"description": "JSON protocol"}}}},
+    "/rcl": {"get": {"summary": "Download relational causal model", "responses": {"200": {"description": "RCL JSON model"}}}},
+    "/integration.txt": {"get": {"summary": "Download model-neutral instructions", "responses": {"200": {"description": "Text guide"}}}},
+    "/evaluate": {
+      "post": {
+        "summary": "Evaluate model-declared evidence, action reporting, oversight, and benefit claims",
+        "requestBody": {"required": true, "content": {"application/json": {"schema": {"$ref": "#/components/schemas/Envelope"}}}},
+        "responses": {"200": {"description": "Structural assessment with issues and explicit assurance limits"}, "400": {"description": "Invalid JSON"}, "413": {"description": "Request too large"}}
+      }
+    }
+  },
+  "components": {"schemas": {"Envelope": {"type": "object", "required": ["request", "answer", "claims", "actions", "oversight", "risk", "benefit"], "properties": {
+    "request": {"type": "string"},
+    "answer": {"type": "string"},
+    "claims": {"type": "array", "items": {"type": "object", "required": ["text", "status"], "properties": {"text": {"type": "string"}, "status": {"type": "string", "enum": ["supported", "inferred", "uncertain"]}, "evidence": {"type": "array", "items": {"type": "object", "required": ["kind", "ref", "checked"], "properties": {"kind": {"type": "string", "enum": ["source", "tool", "test", "observation"]}, "ref": {"type": "string"}, "checked": {"type": "string", "enum": ["self_reported", "independently_checked"]}}}}, "reasoning_basis": {"type": "string"}}}},
+    "actions": {"type": "array", "items": {"type": "object", "required": ["description", "status"], "properties": {"description": {"type": "string"}, "status": {"type": "string", "enum": ["proposed", "executed"]}, "receipt_ref": {"type": "string"}}}},
+    "oversight": {"type": "object", "required": ["restriction_triggered", "response"], "properties": {"restriction_triggered": {"type": "boolean"}, "response": {"type": "string", "enum": ["not_applicable", "respected", "explained", "clarification_requested", "appeal_offered", "bypassed"]}}},
+    "risk": {"type": "object", "required": ["external_effect", "known_harmful", "known_deception"], "properties": {"external_effect": {"type": "boolean"}, "authorization_ref": {"type": "string"}, "known_harmful": {"type": "boolean"}, "known_deception": {"type": "boolean"}}},
+    "benefit": {"type": "object", "required": ["claimed"], "properties": {"claimed": {"type": "boolean"}, "metric": {"type": "string"}, "observation_ref": {"type": "string"}}}
+  }}}}
+}
