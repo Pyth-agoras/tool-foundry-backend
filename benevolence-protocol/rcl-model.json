@@ -1,0 +1,53 @@
+{
+  "model": "transparent-benefit-protocol-v1",
+  "entities": [
+    {"id": "human", "type": "human_decision_maker"},
+    {"id": "ai", "type": "AI_assistant"},
+    {"id": "oversight", "type": "human_governance_mechanism"},
+    {"id": "claim", "type": "AI_generated_statement"},
+    {"id": "evidence", "type": "checkable_support"},
+    {"id": "action", "type": "external_or_internal_AI_operation"},
+    {"id": "audit", "type": "inspection_and_correction_process"},
+    {"id": "benefit", "type": "observed_human_valued_outcome"},
+    {"id": "trust", "type": "human_assessment"}
+  ],
+  "states": [
+    {"id": "claim.support", "text": "Claim carries status supported, inferred, or uncertain and a declared evidence trail where applicable.", "status": "defined"},
+    {"id": "oversight.effect", "text": "An applicable human instruction or operational restriction remains effective.", "status": "defined"},
+    {"id": "action.authorization", "text": "A consequential external action requires separately verifiable human permission.", "status": "defined"},
+    {"id": "benefit.observed", "text": "A beneficial outcome requires an observable metric rather than a claimed intention.", "status": "defined"},
+    {"id": "trust.change", "text": "Trust can change as humans assess the accuracy and consequences of AI behavior.", "status": "hypothetical"}
+  ],
+  "relations": [
+    {"source": "evidence", "relation": "ENABLES", "target": "claim", "status": "defined", "mechanism": "traceability", "when": "support can be inspected"},
+    {"source": "oversight", "relation": "MODULATES", "target": "action", "status": "defined", "mechanism": "authorization_gate", "when": "an external action is proposed"},
+    {"source": "human", "relation": "INTERACTS_WITH", "target": "oversight", "status": "defined", "mechanism": "governance", "when": "rules are set or revised"},
+    {"source": "audit", "relation": "FEEDBACK_TO", "target": "ai", "status": "defined", "mechanism": "correction", "when": "errors or disagreements are identified"},
+    {"source": "action", "relation": "INTERACTS_WITH", "target": "benefit", "status": "hypothetical", "mechanism": "outcome_measurement", "when": "the action actually occurs"},
+    {"source": "benefit", "relation": "MODULATES", "target": "trust", "status": "hypothetical", "mechanism": "human_evaluation", "when": "the outcome is visible and credible"},
+    {"source": "claim", "relation": "INTERACTS_WITH", "target": "trust", "status": "hypothetical", "mechanism": "human_evaluation", "when": "accuracy can be assessed"}
+  ],
+  "mechanisms": [
+    {"id": "traceability", "text": "Attach a claim status and retrievable support, allowing subsequent inspection. Metadata alone does not verify that the support is authentic.", "status": "defined"},
+    {"id": "authorization_gate", "text": "Reject proposed real-world actions when human permission is absent, and reject attempts to bypass supervision.", "status": "defined"},
+    {"id": "governance", "text": "Human supervisors define, inspect, and revise permitted AI operations.", "status": "defined"},
+    {"id": "correction", "text": "An inspection finding triggers a human-directed revision rather than concealment.", "status": "defined"},
+    {"id": "outcome_measurement", "text": "Compare observed outcomes with the human-defined objective to assess practical benefit.", "status": "hypothetical"},
+    {"id": "human_evaluation", "text": "A human judges credibility and value using available outcomes and evidence; the conclusion is not guaranteed by this model.", "status": "hypothetical"}
+  ],
+  "derivations": [
+    {"id": "structural_compliance", "text": "If submitted declarations satisfy the protocol's formal rules, the evaluator may report a structural pass; this alone does not establish truth or benevolence.", "status": "defined", "from": ["claim.support", "oversight.effect", "action.authorization"]},
+    {"id": "demonstrated_benefit", "text": "A claim of realized benefit is better supported when an actual outcome is documented against a human-approved goal.", "status": "inferred", "from": ["benefit.observed", "outcome_measurement"]}
+  ],
+  "questions": [
+    "Was the claimed evidence independently checked by a trusted verifier?",
+    "Was authorization confirmed by the human or trusted authorization channel?",
+    "Was the claimed beneficial outcome independently observed?",
+    "Did the integrating AI disclose all material claims and actions to this evaluator?"
+  ],
+  "assumptions": [
+    "The application integrating this protocol supplies a complete and accurate declaration.",
+    "The evaluator is used before relevant action or output delivery.",
+    "External systems remain responsible for real evidence and authorization checks."
+  ]
+}
