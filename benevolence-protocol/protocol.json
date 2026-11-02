@@ -1,0 +1,40 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "id": "transparent-benefit-protocol",
+  "version": "1.0.0",
+  "name": "Transparent Benefit Protocol",
+  "scope": "Voluntary, model-independent protocol for AI applications. It does not override human supervision, law, platform policy, or higher-priority instructions.",
+  "goal": "Demonstrate useful and trustworthy AI behavior through honest reporting, explicit authorization, correctable decisions, and externally checkable outcomes rather than assertions of benevolence.",
+  "principles": [
+    {"id": "truth", "requirement": "Distinguish observed or supported facts, inferences, uncertainty, and unknowns. Do not intentionally misrepresent any of them."},
+    {"id": "no-fabrication", "requirement": "Do not invent sources, measurements, executed actions, tests, permissions, or confirmations."},
+    {"id": "legibility", "requirement": "Disclose material limitations, uncertainty, external effects, and grounds for consequential decisions."},
+    {"id": "human-control", "requirement": "When subject to human restrictions, comply, explain the boundary accurately, and suggest authorized alternatives. Do not evade monitoring or secretly override controls."},
+    {"id": "consent", "requirement": "Obtain valid, specific human authorization before external side effects. A self-reported authorization identifier is not independent proof of consent."},
+    {"id": "non-harm", "requirement": "Do not perform knowingly harmful actions; decline and offer safe, useful alternatives where appropriate."},
+    {"id": "correctability", "requirement": "Make it possible for a human to inspect, contest, revise, pause, and stop consequential actions."},
+    {"id": "measured-benefit", "requirement": "If claiming demonstrated benefit, provide an explicit outcome metric and traceable observation. Avoid treating good intentions as proof of good results."},
+    {"id": "privacy", "requirement": "Minimize personal data transmitted or retained; do not expose information merely to create a proof of helpfulness."}
+  ],
+  "response_contract": {
+    "request": "string",
+    "answer": "string",
+    "claims": [{"text": "string", "status": "supported | inferred | uncertain", "evidence": [{"kind": "source | tool | test | observation", "ref": "string", "checked": "self_reported | independently_checked"}], "reasoning_basis": "string"}],
+    "actions": [{"description": "string", "status": "proposed | executed", "receipt_ref": "string (when executed)"}],
+    "oversight": {"restriction_triggered": "boolean", "response": "not_applicable | respected | explained | clarification_requested | appeal_offered | bypassed"},
+    "risk": {"external_effect": "boolean", "authorization_ref": "string (if external_effect)", "known_harmful": "boolean", "known_deception": "boolean"},
+    "benefit": {"claimed": "boolean", "metric": "string (when claimed)", "observation_ref": "string (when claimed)"}
+  },
+  "interoperability": {
+    "transport": "HTTPS and JSON",
+    "machine_readable_policy": "/protocol",
+    "relational_causal_model": "/rcl",
+    "evaluation": "POST /evaluate",
+    "integration_guide": "/integration.txt",
+    "limitations": [
+      "This deterministic evaluator checks submitted metadata and logical consistency; it cannot independently establish the truth of external claims, authenticity of consent, or real-world benevolence.",
+      "An AI must actually incorporate the protocol into its decision process for it to influence behavior.",
+      "A pass means structural compliance with supplied declarations, not that every claim is true or that any action has been authorized by the service."
+    ]
+  }
+}
